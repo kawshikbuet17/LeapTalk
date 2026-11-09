@@ -1,0 +1,3 @@
+/home/ipt/kawshik/tts-testing/OmniVoice/outputs/omnivoice_full_benchmark_temp_clone_step16/clone/warmup_05.wav
+/home/ipt/kawshik/tts-testing/OmniVoice/outputs/omnivoice_full_benchmark_temp_clone_step16/clone/warmup_09.wav
+/home/ipt/kawshik/talking-head-testing/LeapTalk/assets/news.wav

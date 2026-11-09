@@ -26,3 +26,9 @@ eval/common_metrics_on_video_quality/*.log
 eval/common_metrics_on_video_quality/fvd/**/i3d*
 eval/common_metrics_on_video_quality/**/*.pb
 web/runtime/**
+
+# benchmark artifacts
+bench/outputs/
+bench/runtime/
+logs/
+PROGRESS.md

@@ -1,0 +1,733 @@
+{
+  "tag": "pro_c1",
+  "config": {
+    "lite": false,
+    "vae": "Wan2.1 VAE",
+    "compile": "on",
+    "steps": 1,
+    "dtype": "bf16",
+    "resolution": "512x512",
+    "fps": 25,
+    "chunk_frames": 28,
+    "chunk_seconds": 1.12,
+    "repeats": 1
+  },
+  "env": {
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "torch": "2.7.1+cu126",
+    "cuda": "12.6",
+    "python": "3.12.16",
+    "gpu_idle_util_before_pct": 0
+  },
+  "load_s": 28.251441677100956,
+  "warmup_s": 323.5854141380405,
+  "warmup_chunk_times_s": [
+    61.31372813798953,
+    20.8396974040661,
+    1.4485282159876078,
+    1.4266651769867167,
+    1.433428375981748,
+    1.4252635069424286,
+    1.4142226830590516,
+    1.4252183469943702,
+    1.4263688270002604,
+    1.4325573530513793,
+    1.4320193559397012,
+    1.4340110929915681,
+    1.42652387090493,
+    1.4306969869649038,
+    1.4512920379638672,
+    1.4538040839834139,
+    1.4440581910312176,
+    1.4373978429939598,
+    1.4566227770410478,
+    1.4354701020056382,
+    1.4234713830519468,
+    1.4357224190607667,
+    1.4233719649491832,
+    1.4286533090053126,
+    1.4324280719738454,
+    1.425179478013888,
+    1.439237731974572,
+    1.4473372359061614,
+    1.4447768289828673,
+    1.4410458700731397,
+    1.4424874150427058,
+    1.4393427529139444,
+    1.4388397079892457,
+    1.4266515219351277,
+    1.4422136000357568,
+    1.4245363069931045,
+    1.4180753090186045,
+    1.4330415170406923,
+    1.4229472279548645,
+    1.422387481899932,
+    1.4361236629774794,
+    1.4391080479836091,
+    1.428005522931926,
+    1.4388248410541564,
+    1.4377860439708456,
+    1.4300782220670953,
+    1.4345107490662485,
+    1.4403728259494528,
+    1.4305389210348949,
+    1.440954549005255,
+    1.4431282558944076,
+    1.4343683629995212,
+    1.435412524966523,
+    1.450893993023783,
+    1.454955855035223,
+    1.4536482520634308,
+    1.4494922499870881,
+    1.469016205985099,
+    1.4492146549746394,
+    1.4502477289643139,
+    1.440030365018174,
+    1.4398148789769039,
+    1.4650613520061597
+  ],
+  "peak_mem_allocated_gb": 9.143473148345947,
+  "peak_mem_reserved_gb": 9.87890625,
+  "gpu_during_bench": {
+    "util_mean": 71.74357023284128,
+    "util_max": 100,
+    "mem_used_max_gb": 23.98260498046875
+  },
+  "cpu_loadavg_1m_end": 47.1669921875,
+  "summary": {
+    "audio_total_s": 89.55,
+    "nonstream": {
+      "rtf": 1.3681436093700379,
+      "fps": 19.833940096723055,
+      "latency_mean_s": 12.25172602190869
+    },
+    "stream": {
+      "rtf": 1.383050055988497,
+      "fps": 19.442539673124145,
+      "first_chunk_p50_s": 1.4334597190027125,
+      "chunk_p50_s": 1.438174561568303,
+      "chunk_p95_s": 1.4751102956011892,
+      "prepare_p50_s": 0.58734613499837,
+      "stages_p50_s": {
+        "audio_enc": 0.024018271446228028,
+        "denoise": 0.3014480056762695,
+        "decode": 0.9868757019042969,
+        "color+hist": 0.008696832418441772
+      }
+    },
+    "realtime": {
+      "ttfa_p50_s": 3.2346353109460324,
+      "ttfa_max_s": 3.2663831840036437,
+      "ttfa_frames_p50_s": 2.55298252904322,
+      "first_chunk_latency_p50_s": 2.1146353109460323,
+      "chunk_latency_p50_s": 3.7965575002669354,
+      "chunk_latency_p95_s": 9.870555582080963,
+      "encode_p50_s": 0.6752259485365357,
+      "stalls": 76,
+      "stall_total_s": 34.82096014811656
+    },
+    "realtime_serial": {
+      "ttfa_p50_s": 3.357962473470252,
+      "ttfa_max_s": 3.391319465939887,
+      "ttfa_frames_p50_s": 2.5615676694433205,
+      "first_chunk_latency_p50_s": 2.237962473470252,
+      "chunk_latency_p50_s": 6.221786876012338,
+      "chunk_latency_p95_s": 21.224335091767827,
+      "encode_p50_s": 0.76562497150735,
+      "stalls": 76,
+      "stall_total_s": 83.38911990820895
+    }
+  },
+  "rows": [
+    {
+      "audio": "000007_21400d8e85de.wav",
+      "path": "/home/ipt/kawshik/tts-testing/OmniVoice/outputs/etin_included_text_FP16_Steps_16/audios/000007_21400d8e85de.wav",
+      "duration_s": 2.84,
+      "nonstream": {
+        "total_s": 4.382608607993461,
+        "rtf": 1.5431720450681201,
+        "fps": 20.30754008872078,
+        "frames": 89,
+        "audio_enc_s": 0.05294220894575119,
+        "chunk_p50_s": 1.411916051991284
+      },
+      "stream": {
+        "gen_s": 4.302278844988905,
+        "rtf": 1.5148869172496144,
+        "fps": 19.52453642046919,
+        "frames": 84,
+        "chunks": 3,
+        "prepare_s": 0.5967977980617434,
+        "first_chunk_s": 1.4435545019805431,
+        "chunk_p50_s": 1.4347242920193821,
+        "chunk_p95_s": 1.442671480984427,
+        "chunk_max_s": 1.4435545019805431,
+        "stages_p50_s": {
+          "audio_enc": 0.024793792724609375,
+          "denoise": 0.300087646484375,
+          "decode": 0.986865234375,
+          "color+hist": 0.008856575965881347
+        }
+      },
+      "realtime": {
+        "prepare_s": 0.586963800014928,
+        "chunks": 3,
+        "ttfa_s": 3.239117830991745,
+        "ttfa_frames_s": 2.5653830349911004,
+        "first_chunk_latency_s": 2.119117830991745,
+        "chunk_latency_p50_s": 2.568995897066779,
+        "chunk_latency_p95_s": 2.9458461109995837,
+        "chunk_latency_max_s": 2.9877183569921177,
+        "compute_p50_s": 1.5674293459160253,
+        "encode_p50_s": 0.6724198560696095,
+        "stalls": 2,
+        "stall_total_s": 0.8686005260003729
+      },
+      "realtime_serial": {
+        "prepare_s": 0.577594910049811,
+        "chunks": 3,
+        "ttfa_s": 3.391319465939887,
+        "ttfa_frames_s": 2.5670913389185444,
+        "first_chunk_latency_s": 2.2713194659398868,
+        "chunk_latency_p50_s": 3.353704389990307,
+        "chunk_latency_p95_s": 4.33113417906966,
+        "chunk_latency_max_s": 4.439737488967366,
+        "compute_p50_s": 1.4466958970297128,
+        "encode_p50_s": 0.761397122987546,
+        "stalls": 2,
+        "stall_total_s": 2.1684180230274794
+      }
+    },
+    {
+      "audio": "000001_db23d9a14705.wav",
+      "path": "/home/ipt/kawshik/tts-testing/OmniVoice/outputs/etin_included_text_FP16_Steps_16/audios/000001_db23d9a14705.wav",
+      "duration_s": 3.68,
+      "nonstream": {
+        "total_s": 5.748884342960082,
+        "rtf": 1.562196832326109,
+        "fps": 20.351774887117852,
+        "frames": 117,
+        "audio_enc_s": 0.02612606598995626,
+        "chunk_p50_s": 1.405606308951974
+      },
+      "stream": {
+        "gen_s": 5.756589445983991,
+        "rtf": 1.5642906103217367,
+        "fps": 19.45596451699979,
+        "frames": 112,
+        "chunks": 4,
+        "prepare_s": 0.5892967719119042,
+        "first_chunk_s": 1.443484573974274,
+        "chunk_p50_s": 1.4397665134747513,
+        "chunk_p95_s": 1.4429890516796149,
+        "chunk_max_s": 1.443484573974274,
+        "stages_p50_s": {
+          "audio_enc": 0.023504511833190918,
+          "denoise": 0.3021265411376953,
+          "decode": 0.9878630371093751,
+          "color+hist": 0.008824384212493897
+        }
+      },
+      "realtime": {
+        "prepare_s": 0.578330953954719,
+        "chunks": 4,
+        "ttfa_s": 3.2663831840036437,
+        "ttfa_frames_s": 2.6072565449867398,
+        "first_chunk_latency_s": 2.1463831840036436,
+        "chunk_latency_p50_s": 2.9265778385335577,
+        "chunk_latency_p95_s": 3.5501700768417206,
+        "chunk_latency_max_s": 3.6231055890489365,
+        "compute_p50_s": 1.5976458509685472,
+        "encode_p50_s": 0.6570287515060045,
+        "stalls": 3,
+        "stall_total_s": 1.476722405045293
+      },
+      "realtime_serial": {
+        "prepare_s": 0.578848595963791,
+        "chunks": 4,
+        "ttfa_s": 3.3497255459660664,
+        "ttfa_frames_s": 2.5711701050167903,
+        "first_chunk_latency_s": 2.2297255459660663,
+        "chunk_latency_p50_s": 3.8535235010087487,
+        "chunk_latency_p95_s": 5.301967630284604,
+        "chunk_latency_max_s": 5.463210612982511,
+        "compute_p50_s": 1.4530996144749224,
+        "encode_p50_s": 0.7517063439590856,
+        "stalls": 3,
+        "stall_total_s": 3.233485067016444
+      }
+    },
+    {
+      "audio": "000008_fdaf505e00a3.wav",
+      "path": "/home/ipt/kawshik/tts-testing/OmniVoice/outputs/etin_included_text_FP16_Steps_16/audios/000008_fdaf505e00a3.wav",
+      "duration_s": 4.48,
+      "nonstream": {
+        "total_s": 5.704388385056518,
+        "rtf": 1.2733009788072585,
+        "fps": 20.51052489807648,
+        "frames": 117,
+        "audio_enc_s": 0.024491820950061083,
+        "chunk_p50_s": 1.394744265009649
+      },
+      "stream": {
+        "gen_s": 5.70830759499222,
+        "rtf": 1.2741758024536205,
+        "fps": 19.62052642332296,
+        "frames": 112,
+        "chunks": 4,
+        "prepare_s": 0.5777838099747896,
+        "first_chunk_s": 1.4307668950641528,
+        "chunk_p50_s": 1.4303745134966448,
+        "chunk_p95_s": 1.430750564095797,
+        "chunk_max_s": 1.4307668950641528,
+        "stages_p50_s": {
+          "audio_enc": 0.023076111793518067,
+          "denoise": 0.2986029510498047,
+          "decode": 0.9843076171875,
+          "color+hist": 0.008504432201385498
+        }
+      },
+      "realtime": {
+        "prepare_s": 0.5780527009628713,
+        "chunks": 4,
+        "ttfa_s": 3.2398978139972314,
+        "ttfa_frames_s": 2.5517378100194037,
+        "first_chunk_latency_s": 2.1198978139972313,
+        "chunk_latency_p50_s": 2.7218349344795567,
+        "chunk_latency_p95_s": 3.3312000145607157,
+        "chunk_latency_max_s": 3.3894141060113903,
+        "compute_p50_s": 1.5566160765010864,
+        "encode_p50_s": 0.6612481689662673,
+        "stalls": 3,
+        "stall_total_s": 1.269516292014159
+      },
+      "realtime_serial": {
+        "prepare_s": 0.5774621319724247,
+        "chunks": 4,
+        "ttfa_s": 3.321172903990373,
+        "ttfa_frames_s": 2.5555223249830306,
+        "first_chunk_latency_s": 2.201172903990373,
+        "chunk_latency_p50_s": 3.8129741145414298,
+        "chunk_latency_p95_s": 5.270139627862488,
+        "chunk_latency_max_s": 5.432121622008271,
+        "compute_p50_s": 1.4506440899567679,
+        "encode_p50_s": 0.746940381010063,
+        "stalls": 3,
+        "stall_total_s": 3.2309487180178973
+      }
+    },
+    {
+      "audio": "000021_4e7fe226a2c2.wav",
+      "path": "/home/ipt/kawshik/tts-testing/OmniVoice/outputs/etin_included_text_FP16_Steps_16/audios/000021_4e7fe226a2c2.wav",
+      "duration_s": 5.64,
+      "nonstream": {
+        "total_s": 7.474990622024052,
+        "rtf": 1.325352947167385,
+        "fps": 19.39801764737698,
+        "frames": 145,
+        "audio_enc_s": 0.04264183097984642,
+        "chunk_p50_s": 1.40016481699422
+      },
+      "stream": {
+        "gen_s": 8.622106035938486,
+        "rtf": 1.5287422049536323,
+        "fps": 19.484798644292454,
+        "frames": 168,
+        "chunks": 6,
+        "prepare_s": 0.5822731659281999,
+        "first_chunk_s": 1.4328942130086944,
+        "chunk_p50_s": 1.4359974135295488,
+        "chunk_p95_s": 1.4475373504974414,
+        "chunk_max_s": 1.4501353140221909,
+        "stages_p50_s": {
+          "audio_enc": 0.023550064086914062,
+          "denoise": 0.3002220458984375,
+          "decode": 0.9865332641601563,
+          "color+hist": 0.008689664363861083
+        }
+      },
+      "realtime": {
+        "prepare_s": 0.5812287479639053,
+        "chunks": 6,
+        "ttfa_s": 3.1652370010269806,
+        "ttfa_frames_s": 2.5420755450613797,
+        "first_chunk_latency_s": 2.0452370010269805,
+        "chunk_latency_p50_s": 3.2582066375017162,
+        "chunk_latency_p95_s": 4.344515397972427,
+        "chunk_latency_max_s": 4.455412819953635,
+        "compute_p50_s": 1.584040318033658,
+        "encode_p50_s": 0.6755819544196129,
+        "stalls": 5,
+        "stall_total_s": 2.4101758189266524
+      },
+      "realtime_serial": {
+        "prepare_s": 0.5771937869722024,
+        "chunks": 6,
+        "ttfa_s": 3.337975101079792,
+        "ttfa_frames_s": 2.555759023060091,
+        "first_chunk_latency_s": 2.2179751010797917,
+        "chunk_latency_p50_s": 4.983940151038114,
+        "chunk_latency_p95_s": 7.457520838567288,
+        "chunk_latency_max_s": 7.73695849508047,
+        "compute_p50_s": 1.4495149499853142,
+        "encode_p50_s": 0.7753950160113163,
+        "stalls": 5,
+        "stall_total_s": 5.518983394000678
+      }
+    },
+    {
+      "audio": "bench_02_bn_very_short_02.wav",
+      "path": "/home/ipt/kawshik/tts-testing/OmniVoice/outputs/omnivoice_4090_fp16/clone/bench_02_bn_very_short_02.wav",
+      "duration_s": 8.12,
+      "nonstream": {
+        "total_s": 11.76191054400988,
+        "rtf": 1.4485111507401331,
+        "fps": 19.46962605634043,
+        "frames": 229,
+        "audio_enc_s": 0.04540129005908966,
+        "chunk_p50_s": 1.400151114037726
+      },
+      "stream": {
+        "gen_s": 11.475814686040394,
+        "rtf": 1.41327767069463,
+        "fps": 19.519311362920657,
+        "frames": 224,
+        "chunks": 8,
+        "prepare_s": 0.5875997359398752,
+        "first_chunk_s": 1.4299489930272102,
+        "chunk_p50_s": 1.4360282879788429,
+        "chunk_p95_s": 1.4421485001395922,
+        "chunk_max_s": 1.4426822550594807,
+        "stages_p50_s": {
+          "audio_enc": 0.02310945510864258,
+          "denoise": 0.3004711456298828,
+          "decode": 0.9863515930175781,
+          "color+hist": 0.008535552024841308
+        }
+      },
+      "realtime": {
+        "prepare_s": 0.5858085619984195,
+        "chunks": 8,
+        "ttfa_s": 3.2452111919410527,
+        "ttfa_frames_s": 2.5647878110175952,
+        "first_chunk_latency_s": 2.1252111919410526,
+        "chunk_latency_p50_s": 3.727326588509604,
+        "chunk_latency_p95_s": 5.088355297489789,
+        "chunk_latency_max_s": 5.276427352996542,
+        "compute_p50_s": 1.571714471501764,
+        "encode_p50_s": 0.6754189970088191,
+        "stalls": 7,
+        "stall_total_s": 3.1512161610554896
+      },
+      "realtime_serial": {
+        "prepare_s": 0.5816981151001528,
+        "chunks": 8,
+        "ttfa_s": 3.314858512021601,
+        "ttfa_frames_s": 2.5665021300083026,
+        "first_chunk_latency_s": 2.194858512021601,
+        "chunk_latency_p50_s": 6.007548167000058,
+        "chunk_latency_p95_s": 9.441391238086391,
+        "chunk_latency_max_s": 9.822469389028846,
+        "compute_p50_s": 1.4491171410190873,
+        "encode_p50_s": 0.7596549295121804,
+        "stalls": 7,
+        "stall_total_s": 7.627610877007248
+      }
+    },
+    {
+      "audio": "bench_01_bn_very_short_01.wav",
+      "path": "/home/ipt/kawshik/tts-testing/OmniVoice/outputs/omnivoice_4090_fp16/clone/bench_01_bn_very_short_01.wav",
+      "duration_s": 9.4,
+      "nonstream": {
+        "total_s": 12.80778639903292,
+        "rtf": 1.3625304679822254,
+        "fps": 20.065918652375817,
+        "frames": 257,
+        "audio_enc_s": 0.042353569995611906,
+        "chunk_p50_s": 1.4018171520438045
+      },
+      "stream": {
+        "gen_s": 13.034686449798755,
+        "rtf": 1.3866687712551866,
+        "fps": 19.333031214102636,
+        "frames": 252,
+        "chunks": 9,
+        "prepare_s": 0.5831952609587461,
+        "first_chunk_s": 1.4316046809544787,
+        "chunk_p50_s": 1.441845470922999,
+        "chunk_p95_s": 1.4751102956011892,
+        "chunk_max_s": 1.4864572000224143,
+        "stages_p50_s": {
+          "audio_enc": 0.02405068778991699,
+          "denoise": 0.302439208984375,
+          "decode": 0.9868861694335938,
+          "color+hist": 0.009072863578796386
+        }
+      },
+      "realtime": {
+        "prepare_s": 0.5916663040407002,
+        "chunks": 9,
+        "ttfa_s": 3.22489273105748,
+        "ttfa_frames_s": 2.561034177080728,
+        "first_chunk_latency_s": 2.10489273105748,
+        "chunk_latency_p50_s": 3.8657884120242665,
+        "chunk_latency_p95_s": 5.57579978763312,
+        "chunk_latency_max_s": 5.7470808460656535,
+        "compute_p50_s": 1.5727266100002453,
+        "encode_p50_s": 0.6778822479536757,
+        "stalls": 8,
+        "stall_total_s": 3.6421881150081736
+      },
+      "realtime_serial": {
+        "prepare_s": 0.5788362469756976,
+        "chunks": 9,
+        "ttfa_s": 3.368779469979927,
+        "ttfa_frames_s": 2.569030550075695,
+        "first_chunk_latency_s": 2.248779469979927,
+        "chunk_latency_p50_s": 6.436025585024617,
+        "chunk_latency_p95_s": 10.285508511012418,
+        "chunk_latency_max_s": 10.713263189028947,
+        "compute_p50_s": 1.4460298520280048,
+        "encode_p50_s": 0.7366677860263735,
+        "stalls": 8,
+        "stall_total_s": 8.464483719049019
+      }
+    },
+    {
+      "audio": "000061_f95b22de4c73.wav",
+      "path": "/home/ipt/kawshik/tts-testing/OmniVoice/outputs/amberit_bangla_asr_faq_FP16_Steps_16/audios/000061_f95b22de4c73.wav",
+      "duration_s": 10.55,
+      "nonstream": {
+        "total_s": 14.294369315030053,
+        "rtf": 1.3549165227516637,
+        "fps": 19.93792056990804,
+        "frames": 285,
+        "audio_enc_s": 0.042470986023545265,
+        "chunk_p50_s": 1.3993715104879811
+      },
+      "stream": {
+        "gen_s": 14.459783977246843,
+        "rtf": 1.3705956376537292,
+        "fps": 19.364051388360526,
+        "frames": 280,
+        "chunks": 10,
+        "prepare_s": 0.5870925340568647,
+        "first_chunk_s": 1.4377122579608113,
+        "chunk_p50_s": 1.4469316330505535,
+        "chunk_p95_s": 1.450852393632522,
+        "chunk_max_s": 1.451479199109599,
+        "stages_p50_s": {
+          "audio_enc": 0.024908415794372557,
+          "denoise": 0.3026853332519531,
+          "decode": 0.9898916015625,
+          "color+hist": 0.00902195167541504
+        }
+      },
+      "realtime": {
+        "prepare_s": 0.590056931017898,
+        "chunks": 10,
+        "ttfa_s": 3.229176557972096,
+        "ttfa_frames_s": 2.5542272480670363,
+        "first_chunk_latency_s": 2.109176557972096,
+        "chunk_latency_p50_s": 4.225922696033958,
+        "chunk_latency_p95_s": 6.033300264717311,
+        "chunk_latency_max_s": 6.2144749919651066,
+        "compute_p50_s": 1.575911577907391,
+        "encode_p50_s": 0.6813782245735638,
+        "stalls": 9,
+        "stall_total_s": 4.105298433993009
+      },
+      "realtime_serial": {
+        "prepare_s": 0.5709925829432905,
+        "chunks": 10,
+        "ttfa_s": 3.379398687975481,
+        "ttfa_frames_s": 2.5505705720279366,
+        "first_chunk_latency_s": 2.259398687975481,
+        "chunk_latency_p50_s": 7.185874790509697,
+        "chunk_latency_p95_s": 11.654747360975945,
+        "chunk_latency_max_s": 12.151079932064748,
+        "compute_p50_s": 1.4445839865365997,
+        "encode_p50_s": 0.7698528200271539,
+        "stalls": 9,
+        "stall_total_s": 9.891681244089268
+      }
+    },
+    {
+      "audio": "000620_8f5fddf75c84.wav",
+      "path": "/home/ipt/kawshik/tts-testing/OmniVoice/outputs/amberit_bangla_asr_faq_FP16_Steps_16/audios/000620_8f5fddf75c84.wav",
+      "duration_s": 11.52,
+      "nonstream": {
+        "total_s": 15.715533831971698,
+        "rtf": 1.364195645136432,
+        "fps": 19.9165999288699,
+        "frames": 313,
+        "audio_enc_s": 0.04075658996589482,
+        "chunk_p50_s": 1.4053370530018583
+      },
+      "stream": {
+        "gen_s": 15.828233885229565,
+        "rtf": 1.373978635870622,
+        "fps": 19.458898714367393,
+        "frames": 308,
+        "chunks": 11,
+        "prepare_s": 0.5899300979217514,
+        "first_chunk_s": 1.4312093190383166,
+        "chunk_p50_s": 1.437582896091044,
+        "chunk_p95_s": 1.4494836605153978,
+        "chunk_max_s": 1.449922667001374,
+        "stages_p50_s": {
+          "audio_enc": 0.02435305595397949,
+          "denoise": 0.3029063720703125,
+          "decode": 0.9870182495117188,
+          "color+hist": 0.008704000473022461
+        }
+      },
+      "realtime": {
+        "prepare_s": 0.5816450039856136,
+        "chunks": 11,
+        "ttfa_s": 3.253039667964913,
+        "ttfa_frames_s": 2.545564787928015,
+        "first_chunk_latency_s": 2.133039667964913,
+        "chunk_latency_p50_s": 4.368334139902144,
+        "chunk_latency_p95_s": 6.392103741944301,
+        "chunk_latency_max_s": 6.638888101973571,
+        "compute_p50_s": 1.5742246320005506,
+        "encode_p50_s": 0.668807610985823,
+        "stalls": 10,
+        "stall_total_s": 4.505848434008658
+      },
+      "realtime_serial": {
+        "prepare_s": 0.576904877088964,
+        "chunks": 11,
+        "ttfa_s": 3.3521032739663497,
+        "ttfa_frames_s": 2.561559489928186,
+        "first_chunk_latency_s": 2.2321032739663496,
+        "chunk_latency_p50_s": 7.706874544937163,
+        "chunk_latency_p95_s": 12.786523194469044,
+        "chunk_latency_max_s": 13.346326566948555,
+        "compute_p50_s": 1.4500725710531697,
+        "encode_p50_s": 0.7716714169364423,
+        "stalls": 10,
+        "stall_total_s": 11.114223292982205
+      }
+    },
+    {
+      "audio": "bench_03_bn_very_short_03.wav",
+      "path": "/home/ipt/kawshik/tts-testing/OmniVoice/outputs/omnivoice_4090_fp16/clone/bench_03_bn_very_short_03.wav",
+      "duration_s": 12.56,
+      "nonstream": {
+        "total_s": 17.087653908063658,
+        "rtf": 1.3604819990496542,
+        "fps": 19.955928522117492,
+        "frames": 341,
+        "audio_enc_s": 0.04334948502946645,
+        "chunk_p50_s": 1.4023896480211988
+      },
+      "stream": {
+        "gen_s": 17.25945157906972,
+        "rtf": 1.374160157569245,
+        "fps": 19.467594231526,
+        "frames": 336,
+        "chunks": 12,
+        "prepare_s": 0.5926569190341979,
+        "first_chunk_s": 1.4340252249967307,
+        "chunk_p50_s": 1.4387662270455621,
+        "chunk_p95_s": 1.4437770882388576,
+        "chunk_max_s": 1.4438036889769137,
+        "stages_p50_s": {
+          "audio_enc": 0.024165696144104003,
+          "denoise": 0.3011999359130859,
+          "decode": 0.9872921142578125,
+          "color+hist": 0.008550879955291748
+        }
+      },
+      "realtime": {
+        "prepare_s": 0.5839596210280433,
+        "chunks": 12,
+        "ttfa_s": 3.2201767859514803,
+        "ttfa_frames_s": 2.5487553229322657,
+        "first_chunk_latency_s": 2.10017678595148,
+        "chunk_latency_p50_s": 4.764490851461886,
+        "chunk_latency_p95_s": 7.088871883733896,
+        "chunk_latency_max_s": 7.295822448972611,
+        "compute_p50_s": 1.5845749264699407,
+        "encode_p50_s": 0.6750329000642523,
+        "stalls": 11,
+        "stall_total_s": 5.195645663021131
+      },
+      "realtime_serial": {
+        "prepare_s": 0.5780768611002713,
+        "chunks": 12,
+        "ttfa_s": 3.3663017980288714,
+        "ttfa_frames_s": 2.561575848958455,
+        "first_chunk_latency_s": 2.2463017980288713,
+        "chunk_latency_p50_s": 8.344484721512998,
+        "chunk_latency_p95_s": 13.768725636146495,
+        "chunk_latency_max_s": 14.38208305003587,
+        "compute_p50_s": 1.4517467945697717,
+        "encode_p50_s": 0.7798268639598973,
+        "stalls": 11,
+        "stall_total_s": 12.135781252007002
+      }
+    },
+    {
+      "audio": "bench_01_bn_very_short_01.wav",
+      "path": "/home/ipt/kawshik/tts-testing/OmniVoice/outputs/omnivoice_4090_26Oct/clone/bench_01_bn_very_short_01.wav",
+      "duration_s": 20.76,
+      "nonstream": {
+        "total_s": 27.53913426294457,
+        "rtf": 1.3265478932054224,
+        "fps": 19.499523655054155,
+        "frames": 537,
+        "audio_enc_s": 0.04505937802605331,
+        "chunk_p50_s": 1.402449209941551
+      },
+      "stream": {
+        "gen_s": 27.404880014481023,
+        "rtf": 1.3200809255530357,
+        "fps": 19.41260095716112,
+        "frames": 532,
+        "chunks": 19,
+        "prepare_s": 0.5820337889017537,
+        "first_chunk_s": 1.475094620953314,
+        "chunk_p50_s": 1.4413950900780037,
+        "chunk_p95_s": 1.4727154672960752,
+        "chunk_max_s": 1.475094620953314,
+        "stages_p50_s": {
+          "audio_enc": 0.02398585510253906,
+          "denoise": 0.30169607543945315,
+          "decode": 0.9868522338867187,
+          "color+hist": 0.008537088394165039
+        }
+      },
+      "realtime": {
+        "prepare_s": 0.5883935709716752,
+        "chunks": 19,
+        "ttfa_s": 3.23015279090032,
+        "ttfa_frames_s": 2.5429828949272633,
+        "first_chunk_latency_s": 2.1101527909003197,
+        "chunk_latency_p50_s": 6.228914932999759,
+        "chunk_latency_p95_s": 9.870555582080963,
+        "chunk_latency_max_s": 10.305901089943944,
+        "compute_p50_s": 1.5773018209729344,
+        "encode_p50_s": 0.6907350169494748,
+        "stalls": 18,
+        "stall_total_s": 8.195748299043622
+      },
+      "realtime_serial": {
+        "prepare_s": 0.5732522410107777,
+        "chunks": 19,
+        "ttfa_s": 3.3638216729741544,
+        "ttfa_frames_s": 2.561523474054411,
+        "first_chunk_latency_s": 2.2438216729741542,
+        "chunk_latency_p50_s": 12.198726354003883,
+        "chunk_latency_p95_s": 21.224335091767827,
+        "chunk_latency_max_s": 22.247325993985868,
+        "compute_p50_s": 1.447344701969996,
+        "encode_p50_s": 0.7851224039914086,
+        "stalls": 18,
+        "stall_total_s": 20.00350432101171
+      }
+    }
+  ]
+}

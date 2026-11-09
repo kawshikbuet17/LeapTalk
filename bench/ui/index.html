@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LeapTalk Bench</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1b1f24;--mut:#667080;--line:#e2e5ea;--acc:#2563eb;--ok:#15803d;--bad:#b91c1c;--chip:#eef2ff}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--fg:#e6e8eb;--mut:#9aa3af;--line:#2a2f3a;--acc:#60a5fa;--ok:#4ade80;--bad:#f87171;--chip:#1e293b}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{display:flex;align-items:center;gap:16px;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--card);position:sticky;top:0;z-index:2;flex-wrap:wrap}
+header h1{font-size:17px;margin:0}header .sub{color:var(--mut);font-size:12px}
+nav{display:flex;gap:4px;margin-left:auto}nav button{border:1px solid var(--line);background:transparent;color:var(--fg);padding:6px 14px;border-radius:8px;cursor:pointer}
+nav button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+main{max-width:1200px;margin:0 auto;padding:18px 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+.card h2{font-size:15px;margin:0 0 4px}.card p.note{color:var(--mut);margin:0 0 12px;font-size:12.5px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}.kpi .l{color:var(--mut);font-size:12px}.kpi .v{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}.kpi .s{color:var(--mut);font-size:11.5px}
+.tw{overflow-x:auto}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}th{color:var(--mut);font-weight:500;font-size:12px}
+td:first-child,th:first-child{text-align:left}tr.best td{background:var(--chip)}
+.good{color:var(--ok);font-weight:600}.bad{color:var(--bad);font-weight:600}
+.row{display:flex;gap:16px;flex-wrap:wrap}.row>*{flex:1 1 320px;min-width:0}
+video{width:100%;max-width:512px;aspect-ratio:1;background:#000;border-radius:10px;display:block}
+label{display:block;color:var(--mut);font-size:12px;margin:10px 0 4px}
+select,input[type=file]{width:100%;padding:7px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}.seg button{border:0;background:transparent;color:var(--fg);padding:7px 16px;cursor:pointer}.seg button.on{background:var(--acc);color:#fff}
+.go{margin-top:14px;padding:9px 20px;border:0;border-radius:8px;background:var(--acc);color:#fff;font-weight:600;cursor:pointer}.go:disabled{opacity:.5;cursor:wait}
+.chk{display:flex;gap:8px;align-items:center;margin-top:10px;color:var(--fg);font-size:13px}
+.log{max-height:260px;overflow:auto}.status{color:var(--mut);font-size:12.5px;margin-top:8px;min-height:18px}
+.bar{display:flex;height:14px;border-radius:4px;overflow:hidden;margin:4px 0}.bar span{display:block;height:100%}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--mut)}.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+img.prev{width:96px;height:96px;object-fit:cover;border-radius:8px;border:1px solid var(--line);margin-top:6px}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>LeapTalk benchmark</h1><div class="sub" id="srv">loading…</div></div>
+  <nav><button class="on" data-tab="bench">Benchmark</button><button data-tab="gen">Generate</button></nav>
+</header>
+<main>
+<section id="tab-bench">
+  <div class="kpis" id="kpis"></div>
+  <div class="card"><h2>Configurations</h2>
+    <p class="note">10 Bangla TTS clips (OmniVoice outputs), 512×512 @ 25 fps, 1 NFE, bf16, after warmup. RTF = compute time ÷ audio duration (&lt;1 is faster than real-time). TTFA = time from audio stream start (audio arriving at 1× speed) to the first chunk: <b>frames</b> = raw frames on host, <b>A/V</b> = encoded playable fMP4 (encode overlapped with next chunk), <b>demo-serial</b> = official web-demo path (compute then encode in one thread). All include the 1.12 s chunk buffer. Stall = playback had to wait for a chunk.</p>
+    <div class="tw"><table id="cfgTable"></table></div></div>
+  <div class="card"><h2>Per-chunk stage breakdown (stream, median)</h2><div id="stages"></div></div>
+  <div class="card"><h2>Per-clip results</h2>
+    <label>Configuration</label><select id="cfgSel"></select>
+    <div class="tw"><table id="clipTable"></table></div></div>
+  <div class="card"><h2>Sample outputs</h2>
+    <div class="row"><div><label>Configuration</label><select id="vCfg"></select></div><div><label>Clip</label><select id="vClip"></select></div></div>
+    <div class="row" style="margin-top:12px"><div><label>Stream output</label><video id="vS" controls playsinline></video></div><div><label>Non-stream output</label><video id="vN" controls playsinline></video></div></div>
+  </div>
+</section>
+
+<section id="tab-gen" class="hidden">
+  <div class="row">
+    <div class="card">
+      <h2>Input</h2>
+      <label>Audio</label><select id="aSel"></select>
+      <input type="file" id="aUp" accept="audio/*" style="margin-top:6px">
+      <audio id="aPrev" controls style="width:100%;margin-top:6px"></audio>
+      <label>Reference image</label>
+      <input type="file" id="iUp" accept="image/*"><img class="prev" id="iPrev" src="" alt="">
+      <label>Mode</label>
+      <div class="seg" id="mode"><button class="on" data-m="stream">Stream</button><button data-m="nonstream">Non-stream</button></div>
+      <label>Resolution</label>
+      <div class="seg" id="res"><button data-s="256">256×256</button><button class="on" data-s="512">512×512</button></div>
+      <div class="chk" id="rtWrap"><input type="checkbox" id="rt" checked><span>Feed audio at real-time speed (simulates live TTS)</span></div>
+      <button class="go" id="go">Generate</button>
+      <div class="status" id="status"></div>
+    </div>
+    <div class="card">
+      <h2>Output</h2>
+      <video id="out" controls playsinline></video>
+      <div class="kpis" id="liveK" style="margin-top:12px"></div>
+    </div>
+  </div>
+  <div class="card"><h2>Chunk log</h2><div class="tw log"><table id="chunkLog"></table></div></div>
+</section>
+</main>
+<script>
+const $=s=>document.querySelector(s), f3=x=>x==null||isNaN(x)?'–':(+x).toFixed(3), ms=x=>x==null||isNaN(x)?'–':Math.round(x*1000)+' ms', f1=x=>(+x).toFixed(1);
+let RES=[], INFO={};
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));$('#tab-bench').classList.toggle('hidden',b.dataset.tab!=='bench');$('#tab-gen').classList.toggle('hidden',b.dataset.tab!=='gen')});
+const label=r=>`${(r.config.resolution||'512x512').split('x')[0]}² ${r.config.vae}${r.config.compile==='on'?' + compile':''}`;
+const kpi=(l,v,s='')=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s}</div></div>`;
+
+async function loadBench(){
+  [RES,INFO]=await Promise.all([fetch('/api/results').then(r=>r.json()),fetch('/api/info').then(r=>r.json())]);
+  const s=INFO.server; $('#srv').textContent=`Live server: ${s.gpu} · ${(s.sizes||[512]).map(x=>x+'²').join('/')} · ${s.lite?'TAE (Lite)':'Wan VAE'} · compile ${s.compile} · ${s.steps} NFE`;
+  if(!RES.length){$('#cfgTable').innerHTML='<tr><td>No results yet</td></tr>';return}
+  const best=RES.reduce((a,b)=>a.summary.stream.rtf<b.summary.stream.rtf?a:b);
+  const S=best.summary;
+  $('#kpis').innerHTML=kpi('Best config',label(best),best.env.gpu)+kpi('Stream RTF',f3(S.stream.rtf),`${f1(S.stream.fps)} FPS generated`)+
+    kpi('Stream TTFA (real-time feed)',S.realtime?f3(S.realtime.ttfa_frames_p50_s)+' s':'–',S.realtime?`frames ready · ${f3(S.realtime.ttfa_p50_s)} s as playable A/V`:'')+
+    kpi('Chunk latency p50',ms(S.stream.chunk_p50_s),`p95 ${ms(S.stream.chunk_p95_s)} · budget 1120 ms`)+
+    kpi('Non-stream RTF',f3(S.nonstream.rtf),`${f1(S.nonstream.fps)} FPS`)+kpi('Peak VRAM',f1(best.peak_mem_reserved_gb)+' GB','torch reserved');
+  $('#cfgTable').innerHTML='<tr><th>Config</th><th>Stream RTF</th><th>Stream FPS</th><th>1st chunk</th><th>Chunk p50</th><th>Chunk p95</th><th>TTFA frames</th><th>TTFA A/V</th><th>Stalls</th><th>TTFA demo-serial</th><th>Stalls serial</th><th>Non-stream RTF</th><th>Non-stream FPS</th><th>VRAM</th><th>Load</th><th>Warmup</th></tr>'+
+    RES.map(r=>{const s=r.summary,rt=s.realtime||{},rs=s.realtime_serial||{};return `<tr class="${r===best?'best':''}"><td>${label(r)}</td><td class="${s.stream.rtf<1?'good':'bad'}">${f3(s.stream.rtf)}</td><td>${f1(s.stream.fps)}</td><td>${ms(s.stream.first_chunk_p50_s)}</td><td>${ms(s.stream.chunk_p50_s)}</td><td>${ms(s.stream.chunk_p95_s)}</td><td>${rt.ttfa_frames_p50_s?f3(rt.ttfa_frames_p50_s)+' s':'–'}</td><td>${rt.ttfa_p50_s?f3(rt.ttfa_p50_s)+' s':'–'}</td><td class="${rt.stalls?'bad':'good'}">${rt.stalls??'–'}</td><td>${rs.ttfa_p50_s?f3(rs.ttfa_p50_s)+' s':'–'}</td><td class="${rs.stalls?'bad':'good'}">${rs.stalls??'–'}</td><td>${f3(s.nonstream.rtf)}</td><td>${f1(s.nonstream.fps)}</td><td>${f1(r.peak_mem_reserved_gb)} GB</td><td>${f1(r.load_s)} s</td><td>${f1(r.warmup_s)} s</td></tr>`}).join('');
+  const C=['#2563eb','#f59e0b','#10b981','#a855f7'],K=['audio_enc','denoise','decode','color+hist'];
+  $('#stages').innerHTML=`<div class="legend">${K.map((k,i)=>`<span><i style="background:${C[i]}"></i>${k}</span>`).join('')}</div>`+RES.map(r=>{const st=r.summary.stream.stages_p50_s,t=K.reduce((a,k)=>a+st[k],0);
+    return `<div style="margin-top:8px;font-size:12.5px">${label(r)} — ${ms(t)} <span style="color:var(--mut)">(${K.map(k=>k+' '+ms(st[k])).join(' · ')})</span></div><div class="bar">${K.map((k,i)=>`<span style="width:${st[k]/t*100}%;background:${C[i]}"></span>`).join('')}</div>`}).join('');
+  for(const sel of ['#cfgSel','#vCfg'])$(sel).innerHTML=RES.map((r,i)=>`<option value="${i}">${label(r)}</option>`).join('');
+  $('#cfgSel').value=$('#vCfg').value=RES.indexOf(best);
+  $('#vClip').innerHTML=best.rows.map((x,i)=>`<option value="${i}">${i+1}. ${x.audio} (${f1(x.duration_s)} s)</option>`).join('');
+  $('#cfgSel').onchange=clipTable;$('#vCfg').onchange=$('#vClip').onchange=vids;clipTable();vids();
+}
+function clipTable(){const r=RES[$('#cfgSel').value];
+  $('#clipTable').innerHTML='<tr><th>#</th><th>Clip</th><th>Audio</th><th>Stream RTF</th><th>Stream FPS</th><th>1st chunk</th><th>Chunk p95</th><th>TTFA frames</th><th>TTFA A/V</th><th>Stalls</th><th>Non-stream total</th><th>Non-stream RTF</th></tr>'+
+  r.rows.map((x,i)=>`<tr><td>${i+1}</td><td style="text-align:left">${x.audio}</td><td>${f1(x.duration_s)} s</td><td>${f3(x.stream.rtf)}</td><td>${f1(x.stream.fps)}</td><td>${ms(x.stream.first_chunk_s)}</td><td>${ms(x.stream.chunk_p95_s)}</td><td>${x.realtime?f3(x.realtime.ttfa_frames_s)+' s':'–'}</td><td>${x.realtime?f3(x.realtime.ttfa_s)+' s':'–'}</td><td>${x.realtime?.stalls??'–'}</td><td>${f3(x.nonstream.total_s)} s</td><td>${f3(x.nonstream.rtf)}</td></tr>`).join('')}
+function vids(){const t=RES[$('#vCfg').value].tag,i=String($('#vClip').value).padStart(2,'0');$('#vS').src=`/outputs/${t}/stream_${i}.mp4`;$('#vN').src=`/outputs/${t}/nonstream_${i}.mp4`}
+
+// ---------------- generate
+let MODE='stream', SIZE=512, imageId='default', uploadedAudio=null;
+document.querySelectorAll('#res button').forEach(b=>b.onclick=()=>{SIZE=+b.dataset.s;document.querySelectorAll('#res button').forEach(x=>x.classList.toggle('on',x===b))});
+$('#iPrev').src='/media/default_image';
+document.querySelectorAll('#mode button').forEach(b=>b.onclick=()=>{MODE=b.dataset.m;document.querySelectorAll('#mode button').forEach(x=>x.classList.toggle('on',x===b));$('#rtWrap').classList.toggle('hidden',MODE!=='stream')});
+async function upload(file){const fd=new FormData();fd.append('file',file);return (await (await fetch('/api/upload',{method:'POST',body:fd})).json()).id}
+$('#aUp').onchange=async e=>{const f=e.target.files[0];if(!f)return;uploadedAudio=await upload(f);$('#aSel').insertAdjacentHTML('afterbegin',`<option value="${uploadedAudio}">Uploaded: ${f.name}</option>`);$('#aSel').value=uploadedAudio;$('#aPrev').src=URL.createObjectURL(f)};
+$('#iUp').onchange=async e=>{const f=e.target.files[0];if(!f)return;imageId=await upload(f);$('#iPrev').src=URL.createObjectURL(f)};
+async function initGen(){const info=INFO.audios?INFO:await fetch('/api/info').then(r=>r.json());
+  $('#aSel').innerHTML=info.audios.map((a,i)=>`<option value="${a.id}">${i+1}. ${a.name} (${f1(a.duration_s)} s)</option>`).join('');
+  const setPrev=()=>{const v=$('#aSel').value;if(v.startsWith('bench:'))$('#aPrev').src='/media/bench_audio/'+v.split(':')[1]};$('#aSel').onchange=setPrev;setPrev()}
+const live=o=>$('#liveK').innerHTML=Object.entries(o).map(([k,v])=>kpi(k,v)).join('');
+$('#go').onclick=()=>MODE==='stream'?runStream():runNonStream();
+
+async function runNonStream(){
+  $('#go').disabled=true;$('#status').textContent='Generating full video…';$('#chunkLog').innerHTML='';live({});const t0=performance.now();
+  try{const r=await fetch('/api/nonstream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({audio:$('#aSel').value,image:imageId,size:SIZE})});
+    if(!r.ok)throw new Error(await r.text());const d=await r.json();const wait=(performance.now()-t0)/1000;
+    $('#out').src=d.url;$('#out').play().catch(()=>{});
+    live({'Time to first frame (client)':f3(wait)+' s','Generate':f3(d.generate_s)+' s','RTF':f3(d.rtf),'Gen FPS':f1(d.fps),'MP4 encode':f3(d.encode_s)+' s','Audio':f1(d.audio_s)+' s'});
+    $('#status').textContent=`Done: ${d.chunks} chunks, ${d.frames} frames at ${d.size}×${d.size}.`}
+  catch(e){$('#status').textContent='Error: '+e.message}finally{$('#go').disabled=false}}
+
+function runStream(){
+  $('#go').disabled=true;$('#chunkLog').innerHTML='<tr><th>#</th><th>Audio ready</th><th>Chunk ready</th><th>Latency</th><th>Compute</th><th>Encode</th><th>Gen FPS</th></tr>';live({});
+  const v=$('#out'),mime='video/mp4; codecs="avc1.64001e, mp4a.40.2"';
+  if(!window.MediaSource||!MediaSource.isTypeSupported(mime)){$('#status').textContent='MediaSource not supported in this browser';$('#go').disabled=false;return}
+  const msrc=new MediaSource();v.src=URL.createObjectURL(msrc);let sb=null,queue=[],nextTs=0,ended=false,meta=null,firstPlay=null,startInfo=null;const tReq=performance.now();
+  const pump=()=>{if(!sb||sb.updating||msrc.readyState!=='open')return;const s=queue.shift();if(!s){if(ended)try{msrc.endOfStream()}catch(_){};return}
+    sb.timestampOffset=s.ts;sb.appendBuffer(s.bytes);v.play().catch(()=>{})};
+  msrc.addEventListener('sourceopen',()=>{sb=msrc.addSourceBuffer(mime);sb.mode='segments';sb.addEventListener('updateend',pump);pump()},{once:true});
+  v.addEventListener('playing',()=>{if(firstPlay==null){firstPlay=(performance.now()-tReq)/1000;upd()}},{once:true});
+  let n=0,lat=[];
+  const upd=e=>{if(!startInfo)return;live({'TTFA frames':meta0?f3(meta0.frames_ready_at_s)+' s':'…','TTFA A/V (server)':meta0?f3(meta0.ready_at_s)+' s':'…','First frame on screen':firstPlay!=null?f3(firstPlay)+' s':'…','Chunks':`${n}/${startInfo.chunks}`,'Latency p50':lat.length?ms([...lat].sort((a,b)=>a-b)[lat.length>>1]):'–','RTF':e?f3(e.rtf):'…','Gen FPS':e?f1(e.fps):'…'})};
+  let meta0=null;
+  const proto=location.protocol==='https:'?'wss':'ws',ws=new WebSocket(`${proto}://${location.host}/ws/stream`);ws.binaryType='arraybuffer';
+  ws.onopen=()=>{ws.send(JSON.stringify({audio:$('#aSel').value,image:imageId,realtime:$('#rt').checked,size:SIZE}));$('#status').textContent='Preparing reference image…'};
+  ws.onmessage=ev=>{
+    if(typeof ev.data!=='string'){queue.push({bytes:ev.data,ts:nextTs});nextTs+=meta.frames/meta.fps;pump();return}
+    const m=JSON.parse(ev.data);
+    if(m.type==='start'){startInfo=m;$('#status').textContent=`Streaming ${m.chunks} chunks at ${m.size}×${m.size} (${m.realtime?'real-time audio feed':'as fast as possible'})…`;upd()}
+    else if(m.type==='chunk'){meta=m;if(!meta0)meta0=m;n++;lat.push(m.latency_s);
+      $('#chunkLog').insertAdjacentHTML('beforeend',`<tr><td>${m.index+1}</td><td>${f3(m.available_at_s)} s</td><td>${f3(m.ready_at_s)} s</td><td>${ms(m.latency_s)}</td><td>${ms(m.compute_s)}</td><td>${ms(m.encode_s)}</td><td>${f1(m.frames/m.compute_s)}</td></tr>`);upd()}
+    else if(m.type==='end'){ended=true;pump();upd(m);$('#status').textContent=`Done. Wall ${f3(m.wall_s)} s.`;$('#go').disabled=false}
+    else if(m.type==='error'){$('#status').textContent='Error: '+m.message;$('#go').disabled=false}};
+  ws.onclose=()=>{$('#go').disabled=false};
+}
+loadBench().then(initGen).catch(e=>{$('#srv').textContent='error: '+e;initGen()});
+</script>
+</body>
+</html>
