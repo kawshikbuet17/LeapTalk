@@ -111,31 +111,58 @@ Short clips have slightly higher RTF because the last chunk is padded up to a fu
 `bench/ui_server.py` serves one page with two tabs.
 
 - **Benchmark**: the tables above, per-clip results and sample videos.
-- **Generate**: pick 256² or 512², then a mode:
+- **Generate**: pick 256² or 512², a frame rate, then a mode:
   - **Stream**: chunk-by-chunk playback, with audio fed at 1× like live TTS.
   - **Non-stream**: the whole clip at once, then play.
-  - **Echo (live mic)**: talk, and the avatar repeats what you say about 2 s later.
+  - **Echo (mic)**: say a sentence and stop talking. After a pause (default 1.5 s, adjustable from 0.3 to 5 s) the avatar repeats the whole sentence. The mic is ignored while the avatar talks, so its voice is not echoed back.
   - Audio for Stream and Non-stream can be a test clip, an uploaded file, or a mic recording.
+  - **Real-time speed** (Stream and Echo): when on, the audio is fed at 1× like live TTS. When off, it is generated as fast as possible.
 
 ```
-browser ───── https / wss ─────> ui_server.py (port 8075)
-  mic PCM (echo) ──────────────>   resample to 16 kHz -> 1.12 s chunk -> DiT + VAE (GPU)
-  <──────────── fMP4 chunk ─────   h264 + aac encode on a CPU thread (overlaps the next chunk)
+ Echo:  mic ──> browser: detect speech, wait for the pause, resample to 16 kHz
+                  │  WAV upload, then the normal stream path
+                  v
+        ui_server.py ──> 28-frame chunks -> DiT + VAE (GPU) -> h264/aac fMP4 (CPU thread)
+                  │
+                  v
+        browser plays the chunks as they arrive (MSE)
 ```
 
-- **Settings** are in `bench/.env`. It is gitignored; copy `bench/.env.example` to create it.
+**Echo latency** (512², 25 fps, Lite + compile, 4.5 s sentence). The time is measured from the end of the pause to the first video chunk, and the upload takes ~70 ms.
 
-  | Variable | Meaning |
-  |---|---|
-  | `LEAPTALK_UI_SCHEME` | `https` or `http` |
-  | `LEAPTALK_UI_PORT` | port to serve on |
-  | `LEAPTALK_UI_DOMAIN` | domain shown in the startup URL |
-  | `LEAPTALK_UI_SSL_CERT`, `LEAPTALK_UI_SSL_KEY` | full-chain certificate and its key (https only) |
+| Real-time speed | Pause end → first chunk |
+|---|---|
+| off | ~1.2 s |
+| on | ~2.3 s (waits for 1.12 s of "arriving" audio first) |
 
-  `--scheme` and `--port` override the file.
+Add the pause itself to get the time from when you stop talking.
+
+**Frame rate.** The model was trained at 25 fps. Other rates run, but their lip sync has not been checked.
+
+A chunk is always 28 frames, so the compute per chunk stays the same. A lower fps puts more audio into each chunk and lowers the RTF. These numbers are stream mode in the UI server, median of 4 runs:
+
+| fps | Audio per chunk | Stream RTF 512² | Stream RTF 256² |
+|---:|---:|---:|---:|
+| 15 | 1.87 s | 0.31 | 0.10 |
+| 20 | 1.40 s | 0.37 | 0.13 |
+| **25** | 1.12 s | 0.49 | 0.17 |
+| 30 | 0.93 s | 0.57 | 0.19 |
+
+Compute is ~520 ms per chunk at 512² and ~140 ms at 256². These RTFs are a little higher than in section 1, because the UI server and other jobs share the CPU.
+
+**Settings** are in `bench/.env`. It is gitignored; copy `bench/.env.example` to create it.
+
+| Variable | Meaning |
+|---|---|
+| `LEAPTALK_UI_SCHEME` | `https` or `http` |
+| `LEAPTALK_UI_PORT` | port to serve on |
+| `LEAPTALK_UI_DOMAIN` | domain shown in the startup URL |
+| `LEAPTALK_UI_SSL_CERT`, `LEAPTALK_UI_SSL_KEY` | full-chain certificate and its key (https only) |
+
+`--scheme` and `--port` override the file.
+
 - **Mic needs HTTPS.** Browsers allow the mic only on https or localhost. Over plain http, Record and Echo are turned off.
-- **Echo latency** (512², Lite + compile, 48 kHz mic audio at 1×): ~0.97 s from a full 1.12 s of audio to a playable chunk. Compute is ~0.43 s per chunk. Mouth to avatar is about 1.12 + 0.97 ≈ 2.1 s.
-- **One session at a time.** An echo session holds the GPU, so other requests get "busy". A session stops after 10 min.
+- **One job at a time.** Requests share one GPU and wait for each other. Stopping a stream or echo reply frees the GPU in about 1 s.
 
 ## Reproduce
 

@@ -14,7 +14,7 @@
 - **High-fidelity lip synchronization**: Audio-driven classifier-free guidance strengthens mouth motion and speech alignment under extreme step reduction.
 - **Stable long-video identity**: Preserve facial structure, appearance, and visual style over long rollouts by reformulating talking-head generation as a data-to-data transport process via a Brownian bridge model, implemented through a novel **Bridge Forcing** paradigm.
 
-**RTX 4090 benchmark:** see [BENCHMARK.md](./BENCHMARK.md) for RTF, FPS and streaming latency at 512² and 256², and for the web UI (stream, non-stream, mic record, live echo).
+**RTX 4090 benchmark:** see [BENCHMARK.md](./BENCHMARK.md) for RTF, FPS and streaming latency at 512² and 256², and for the web UI (stream, non-stream, mic record, echo after a pause, 15–30 fps).
 
 ## 🔧Installation
 #### 1. Create a Conda environment

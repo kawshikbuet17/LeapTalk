@@ -14,13 +14,13 @@ import asyncio
 import concurrent.futures
 import json
 import os
+import shutil
 import sys
 import time
 import uuid
 from pathlib import Path
 
 import numpy as np
-import soxr
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
@@ -45,7 +45,7 @@ gpu_lock = asyncio.Lock()
 runner: LeapTalkRunner | None = None
 server_cfg: dict = {}
 SIZES = (256, 512)  # square output resolutions offered in the UI
-ECHO_MAX_S = 600  # an echo session holds the GPU; cap it so a forgotten tab frees it
+FPS_CHOICES = (15, 20, 25, 30)  # generation frame rates; the model was trained at 25
 
 
 def load_env(path: Path) -> None:
@@ -65,6 +65,13 @@ def resolve_size(size) -> int:
     if size not in SIZES:
         raise HTTPException(400, f"size must be one of {SIZES}")
     return size
+
+
+def resolve_fps(fps) -> int:
+    fps = int(fps or 25)
+    if fps not in FPS_CHOICES:
+        raise HTTPException(400, f"fps must be one of {FPS_CHOICES}")
+    return fps
 
 
 def audio_list():
@@ -137,18 +144,19 @@ class NonStreamReq(BaseModel):
     audio: str
     image: str | None = None
     size: int = 512
+    fps: int = 25
 
 
 @app.post("/api/nonstream")
 async def nonstream(req: NonStreamReq):
     audio_path, image_path = resolve_audio(req.audio), resolve_image(req.image)
-    size = resolve_size(req.size)
+    size, fps = resolve_size(req.size), resolve_fps(req.fps)
 
     def job():
         r = runner
         t0 = time.perf_counter()
         audio = r.load_audio(str(audio_path))
-        state, prep = r.prepare(image_path, size)
+        state, prep = r.prepare(image_path, size, fps)
         frames, d = r.generate_full(state, audio)
         t_enc = time.perf_counter()
         name = f"ns_{uuid.uuid4().hex[:10]}.mp4"
@@ -167,10 +175,14 @@ async def nonstream(req: NonStreamReq):
             "fps": frames.shape[0] / d["total"],
             "chunks": len(d["chunks"]),
             "size": size,
+            "video_fps": fps,
         }
 
     async with gpu_lock:
         return await on_gpu(job)
+
+
+_background: set = set()  # keeps cleanup tasks referenced until they finish
 
 
 class ChunkSender:
@@ -178,19 +190,24 @@ class ChunkSender:
 
     def __init__(self, ws: WebSocket, r: LeapTalkRunner, t_req: float):
         self.ws, self.r, self.t_req = ws, r, t_req
-        self.t0 = time.perf_counter()  # audio stream start (echo resets it at the first mic packet)
+        self.t0 = time.perf_counter()  # audio stream start
         self.out_dir = RUNTIME / f"st_{uuid.uuid4().hex[:10]}"
         self.out_dir.mkdir()
         self.compute_s, self.n = 0.0, 0
+        self.encoding: set = set()  # encode futures still running on the CPU thread
         self.q: asyncio.Queue = asyncio.Queue()
         self.task = asyncio.create_task(self._send())
 
     async def add(self, state, sl: np.ndarray, avail: float) -> None:
+        if self.task.done():  # the sender failed (client gone): raise its error and stop generating
+            self.task.result()
         r = self.r
         frames, stg = await on_gpu(r.stream_chunk, state, sl)
         self.compute_s += stg["total"]
         path = self.out_dir / f"c{self.n:04d}.mp4"
         fut = asyncio.get_running_loop().run_in_executor(ENC, r.encode_fmp4_chunk, frames, sl, path, True)
+        self.encoding.add(fut)
+        fut.add_done_callback(self.encoding.discard)
         await self.q.put(({"type": "chunk", "index": self.n, "frames": int(frames.shape[0]), "fps": r.fps,
                            "compute_s": stg["total"], "stages": stg, "available_at_s": avail,
                            "frames_ready_at_s": time.perf_counter() - self.t0}, fut, path))
@@ -199,7 +216,7 @@ class ChunkSender:
     async def _send(self) -> None:
         while (item := await self.q.get()) is not None:
             meta, fut, path = item
-            enc = await fut
+            enc = await asyncio.shield(fut)  # cancelling the sender must not orphan a running encode
             ready = time.perf_counter() - self.t0
             meta.update(encode_s=enc, ready_at_s=ready, latency_s=ready - meta["available_at_s"],
                         since_request_s=time.perf_counter() - self.t_req)
@@ -217,12 +234,14 @@ class ChunkSender:
                 self.task.exception()  # mark a send error (client gone) as handled
         else:
             self.task.cancel()
-        try:  # best effort: chunks are sent already, or nobody is listening
-            for f in self.out_dir.glob("*"):
-                f.unlink(missing_ok=True)
-            self.out_dir.rmdir()
-        except OSError:  # an encode was still in flight after a disconnect
-            pass
+        t = asyncio.get_running_loop().create_task(self._cleanup(list(self.encoding)))
+        _background.add(t)
+        t.add_done_callback(_background.discard)
+
+    async def _cleanup(self, encoding: list) -> None:
+        # after a disconnect, encodes may still be writing here; let them finish, then delete
+        await asyncio.gather(*encoding, return_exceptions=True)
+        shutil.rmtree(self.out_dir, ignore_errors=True)
 
 
 async def report_error(ws: WebSocket, e: Exception) -> None:
@@ -240,12 +259,12 @@ async def ws_stream(ws: WebSocket):
         req = json.loads(await ws.receive_text())
         audio_path, image_path = resolve_audio(req["audio"]), resolve_image(req.get("image"))
         realtime = bool(req.get("realtime", True))
-        size = resolve_size(req.get("size"))
+        size, fps = resolve_size(req.get("size")), resolve_fps(req.get("fps"))
         r = runner
         async with gpu_lock:
             t_req = time.perf_counter()
             audio = r.load_audio(str(audio_path))
-            state, prep = await on_gpu(r.prepare, image_path, size)
+            state, prep = await on_gpu(r.prepare, image_path, size, fps)
             slices = r.split_slices(audio)
             await ws.send_text(json.dumps({"type": "start", "chunks": len(slices), "prepare_s": prep,
                                            "chunk_seconds": r.slice_seconds, "fps": r.fps,
@@ -272,97 +291,6 @@ async def ws_stream(ws: WebSocket):
     finally:
         if out:
             out.cancel()
-        try:
-            await ws.close()
-        except Exception:
-            pass
-
-
-@app.websocket("/ws/echo")
-async def ws_echo(ws: WebSocket):
-    """Live mic -> the avatar repeats it.
-
-    Client sends {"image", "size", "sample_rate"}, then binary int16 mono PCM at sample_rate, then
-    {"type": "stop"}. Audio is resampled to 16 kHz as it arrives; every 1.12 s becomes one chunk
-    through the same path as /ws/stream.
-    """
-    await ws.accept()
-    out = recv = None
-    try:
-        if gpu_lock.locked():
-            raise RuntimeError("the GPU is busy with another session; try again in a moment")
-        req = json.loads(await ws.receive_text())
-        image_path, size = resolve_image(req.get("image")), resolve_size(req.get("size"))
-        rate = int(req.get("sample_rate") or 0)
-        if not 8000 <= rate <= 192000:
-            raise ValueError(f"unsupported sample_rate {rate}")
-        r = runner
-        async with gpu_lock:
-            t_req = time.perf_counter()
-            state, prep = await on_gpu(r.prepare, image_path, size)
-            await ws.send_text(json.dumps({"type": "start", "prepare_s": prep, "chunk_seconds": r.slice_seconds,
-                                           "fps": r.fps, "size": size, "max_s": ECHO_MAX_S}))
-            rs = soxr.ResampleStream(rate, r.sr, 1, dtype="float32")
-            blocks: asyncio.Queue = asyncio.Queue()
-            out = ChunkSender(ws, r, t_req)
-            heard = 0.0
-            S = r.slice_samples
-
-            async def receive() -> str:
-                nonlocal heard
-                buf = np.zeros(0, np.float32)
-                started = False
-
-                def push(y: np.ndarray, last: bool = False) -> None:
-                    nonlocal buf
-                    buf = np.concatenate([buf, y])
-                    while len(buf) >= S:
-                        blocks.put_nowait((buf[:S].copy(), time.perf_counter() - out.t0))
-                        buf = buf[S:]
-                    if last and len(buf) > r.sr // 10:  # pad a tail longer than 0.1 s to a full chunk
-                        blocks.put_nowait((np.pad(buf, (0, S - len(buf))), time.perf_counter() - out.t0))
-
-                flush = lambda: push(rs.resample_chunk(np.zeros(0, np.float32), last=True), last=True)
-                try:
-                    while True:
-                        msg = await ws.receive()
-                        if msg["type"] == "websocket.disconnect":
-                            return "disconnect"
-                        if msg.get("bytes"):
-                            if not started:
-                                out.t0, started = time.perf_counter(), True
-                            x = np.frombuffer(msg["bytes"], "<i2").astype(np.float32) / 32768.0
-                            heard += len(x) / rate
-                            push(rs.resample_chunk(x))
-                            if heard >= ECHO_MAX_S:
-                                flush()
-                                return "time limit"
-                        elif msg.get("text") and json.loads(msg["text"]).get("type") == "stop":
-                            flush()
-                            return "stopped"
-                finally:
-                    blocks.put_nowait(None)
-
-            recv = asyncio.create_task(receive())
-            while (item := await blocks.get()) is not None:
-                if recv.done() and recv.result() == "disconnect":
-                    break  # nobody is watching; do not burn GPU on the backlog
-                await out.add(state, *item)
-            reason = await recv
-            if reason == "disconnect":
-                return
-            await out.finish()
-            await ws.send_text(json.dumps({"type": "end", "reason": reason, "audio_s": heard, "chunks": out.n,
-                                           "compute_total_s": out.compute_s,
-                                           "rtf": out.compute_s / max(heard, 1e-6)}))
-    except WebSocketDisconnect:
-        return
-    except Exception as e:
-        await report_error(ws, e)
-    finally:
-        for t in (recv, out):
-            if t:
-                t.cancel()
         try:
             await ws.close()
         except Exception:
@@ -401,8 +329,14 @@ def main():
                 f, _ = runner.stream_chunk(st, sl)
             runner.encode_fmp4_chunk(f, sl, RUNTIME / "warm.mp4", True)
             runner.generate_full(runner.prepare(lt_core.DEFAULT_IMAGE, size)[0], warm)
+        for fps in FPS_CHOICES:  # same graph; this only warms wav2vec at each feature length
+            st, _ = runner.prepare(lt_core.DEFAULT_IMAGE, size, fps)
+            for sl in runner.split_slices(warm)[:2]:
+                runner.stream_chunk(st, sl)
+        runner.prepare(lt_core.DEFAULT_IMAGE, size, 25)
         print(f"warm {size}x{size} done at {time.perf_counter() - t:.0f}s", flush=True)
     server_cfg = {"lite": bool(args.lite), "compile": args.compile, "steps": 1, "sizes": list(SIZES),
+                  "fps_choices": list(FPS_CHOICES), "trained_fps": 25,
                   "gpu": runner.torch.cuda.get_device_name(0),
                   "load_s": runner.load_seconds, "warmup_s": time.perf_counter() - t}
     print(f"ready: {server_cfg}", flush=True)

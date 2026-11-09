@@ -6,6 +6,7 @@ reflect the real pipeline. Only instrumentation (CUDA-event stage breakdown) is 
 """
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import sys
@@ -61,12 +62,21 @@ class LeapTalkRunner:
         self.pipe = self.engine._pipeline
         self.sp = self.engine._sp
         self.dtype = self.engine._amp_dtype
-        s = self.settings
-        self.fps = s.fps
-        self.sr = s.sample_rate
-        self.slice_frames = int(self.sp.slice_len)  # new frames per chunk (28)
-        self.slice_samples = self.slice_frames * self.sr // self.fps  # 17920 @16k
-        self.slice_seconds = self.slice_frames / self.fps  # 1.12 s
+        self.sr = self.settings.sample_rate
+        self.slice_frames = int(self.sp.slice_len)  # new frames per chunk (28, any fps)
+
+    # fps can change per turn (prepare); a chunk always has 28 frames, so its audio length follows fps
+    @property
+    def fps(self) -> int:
+        return int(self.settings.fps)
+
+    @property
+    def slice_samples(self) -> int:
+        return int(round(self.slice_frames * self.sr / self.fps))  # 17920 @ 25 fps, 16 kHz
+
+    @property
+    def slice_seconds(self) -> float:
+        return self.slice_frames / self.fps  # 1.12 s @ 25 fps
 
     # ------------------------------------------------------------------ helpers
     def _sync(self) -> None:
@@ -87,13 +97,21 @@ class LeapTalkRunner:
             audio = np.concatenate([audio, np.zeros(self.slice_samples - rem, dtype=np.float32)])
         return list(audio.reshape(-1, self.slice_samples))
 
-    def prepare(self, image_path: str | Path = DEFAULT_IMAGE, size: int | None = None) -> tuple[_TurnState, float]:
-        """Encode the reference image; `size` (e.g. 256 or 512) sets the square output resolution."""
+    def prepare(self, image_path: str | Path = DEFAULT_IMAGE, size: int | None = None,
+                fps: int | None = None) -> tuple[_TurnState, float]:
+        """Encode the reference image; `size` (e.g. 256 or 512) sets the square output resolution.
+
+        `fps` sets the generation frame rate (the model was trained at 25). Only the audio-feature
+        rate changes; the DiT input shapes stay the same, so compiled graphs are reused.
+        """
         if size is not None:
             size = int(size)
             if size % 16:
                 raise ValueError(f"size must be a multiple of 16, got {size}")
             self.settings.height = self.settings.width = size
+        if fps is not None:
+            self.settings.fps = int(fps)
+            self.sp.tgt_fps = int(fps)
         self._sync()
         t0 = time.perf_counter()
         state = self.engine._prepare_turn_sync(str(image_path))
@@ -179,13 +197,11 @@ class LeapTalkRunner:
         torch = self.torch
         s = self.settings
         fn, sl = self.sp.frame_num, self.slice_frames
-        frame_samples = fn * s.sample_rate // s.fps
-        audio = audio.copy()
-        rem = (len(audio) - frame_samples) % self.slice_samples
-        if rem > 0:
-            audio = np.concatenate([audio, np.zeros(self.slice_samples - rem, dtype=np.float32)])
-        if len(audio) < frame_samples:
-            audio = np.concatenate([audio, np.zeros(frame_samples - len(audio), dtype=np.float32)])
+        # pad to whole chunks, counted in frames: at 15/30 fps a frame is a fractional number of samples
+        need = math.ceil(len(audio) * s.fps / s.sample_rate)
+        n_target = 1 + max(0, math.ceil((need - fn) / sl))
+        target = math.ceil((fn + (n_target - 1) * sl) * s.sample_rate / s.fps) + 1  # +1: wav2vec floors len*fps/sr
+        audio = np.concatenate([audio, np.zeros(max(0, target - len(audio)), dtype=np.float32)])
 
         self._sync()
         t0 = time.perf_counter()

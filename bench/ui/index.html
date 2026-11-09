@@ -24,7 +24,7 @@ td:first-child,th:first-child{text-align:left}tr.best td{background:var(--chip)}
 .row{display:flex;gap:16px;flex-wrap:wrap}.row>*{flex:1 1 320px;min-width:0}
 video{width:100%;max-width:512px;aspect-ratio:1;background:#000;border-radius:10px;display:block}
 label{display:block;color:var(--mut);font-size:12px;margin:10px 0 4px}
-select,input[type=file]{width:100%;padding:7px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
+select,input[type=file],input[type=number]{width:100%;padding:7px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}.seg button{border:0;background:transparent;color:var(--fg);padding:7px 16px;cursor:pointer}.seg button.on{background:var(--acc);color:#fff}
 .go{margin-top:14px;padding:9px 20px;border:0;border-radius:8px;background:var(--acc);color:#fff;font-weight:600;cursor:pointer}.go:disabled{opacity:.5;cursor:wait}
 .chk{display:flex;gap:8px;align-items:center;margin-top:10px;color:var(--fg);font-size:13px}
@@ -66,19 +66,25 @@ p.note{color:var(--mut);margin:10px 0 0;font-size:12.5px}
     <div class="card">
       <h2>Input</h2>
       <label>Mode</label>
-      <div class="seg" id="mode"><button class="on" data-m="stream">Stream</button><button data-m="nonstream">Non-stream</button><button data-m="echo">Echo (live mic)</button></div>
+      <div class="seg" id="mode"><button class="on" data-m="stream">Stream</button><button data-m="nonstream">Non-stream</button><button data-m="echo">Echo (mic)</button></div>
       <div id="audioIn">
         <label>Audio</label><select id="aSel"></select>
         <div class="arow"><label class="btn" for="aUp">Upload audio file</label><input type="file" id="aUp" accept="audio/*" class="hidden">
           <button class="btn" id="recBtn">● Record</button><span class="mut" id="recInfo"></span></div>
         <audio id="aPrev" controls style="width:100%;margin-top:6px"></audio>
       </div>
-      <p class="note hidden" id="echoNote">Speak into the mic. The avatar repeats what you say about 2 s later (1.12 s of audio is collected per chunk). Use headphones, or the avatar's voice can loop back into the mic.</p>
+      <div class="hidden" id="echoIn">
+        <p class="note">Speak a sentence, then stop talking. After the pause below, the avatar repeats the whole sentence. The mic is ignored while the avatar talks, so its voice is not echoed back.</p>
+        <label>Pause that ends a sentence (seconds)</label>
+        <input type="number" id="pause" min="0.3" max="5" step="0.1" value="1.5">
+      </div>
       <div class="meter hidden" id="meter"><span id="lvl"></span></div>
       <label>Reference image</label>
       <input type="file" id="iUp" accept="image/*"><img class="prev" id="iPrev" src="" alt="">
       <label>Resolution</label>
       <div class="seg" id="res"><button data-s="256">256×256</button><button class="on" data-s="512">512×512</button></div>
+      <label>Frame rate (the model was trained at 25 fps; other rates are untested for lip sync)</label>
+      <div class="seg" id="fpsSel"><button data-f="15">15</button><button data-f="20">20</button><button class="on" data-f="25">25</button><button data-f="30">30</button></div>
       <div class="chk" id="rtWrap"><input type="checkbox" id="rt" checked><span>Feed audio at real-time speed (simulates live TTS)</span></div>
       <button class="go" id="go">Generate</button>
       <div class="status" id="status"></div>
@@ -125,12 +131,13 @@ function clipTable(){const r=RES[$('#cfgSel').value];
 function vids(){const t=RES[$('#vCfg').value].tag,i=String($('#vClip').value).padStart(2,'0');$('#vS').src=`/outputs/${t}/stream_${i}.mp4`;$('#vN').src=`/outputs/${t}/nonstream_${i}.mp4`}
 
 // ---------------- generate
-let MODE='stream', SIZE=512, imageId='default', rec=null, echo=null;
+let MODE='stream', SIZE=512, FPS=25, imageId='default', rec=null, echo=null;
 const goLabel=()=>MODE==='echo'?(echo?'■ Stop echo':'● Start echo'):'Generate';
-document.querySelectorAll('#res button').forEach(b=>b.onclick=()=>{SIZE=+b.dataset.s;document.querySelectorAll('#res button').forEach(x=>x.classList.toggle('on',x===b))});
+const seg=(sel,key,set)=>document.querySelectorAll(sel+' button').forEach(b=>b.onclick=()=>{set(b.dataset[key]);document.querySelectorAll(sel+' button').forEach(x=>x.classList.toggle('on',x===b))});
+seg('#res','s',v=>SIZE=+v);seg('#fpsSel','f',v=>FPS=+v);
 $('#iPrev').src='/media/default_image';
 document.querySelectorAll('#mode button').forEach(b=>b.onclick=()=>{if(echo||rec)return;MODE=b.dataset.m;document.querySelectorAll('#mode button').forEach(x=>x.classList.toggle('on',x===b));
-  $('#rtWrap').classList.toggle('hidden',MODE!=='stream');$('#audioIn').classList.toggle('hidden',MODE==='echo');$('#echoNote').classList.toggle('hidden',MODE!=='echo');
+  $('#rtWrap').classList.toggle('hidden',MODE==='nonstream');$('#audioIn').classList.toggle('hidden',MODE==='echo');$('#echoIn').classList.toggle('hidden',MODE!=='echo');
   $('#go').textContent=goLabel();$('#status').textContent=MODE==='echo'&&!micOK()?MIC_MSG:''});
 async function upload(file){const fd=new FormData();fd.append('file',file);const r=await fetch('/api/upload',{method:'POST',body:fd});if(!r.ok)throw new Error(await r.text());return (await r.json()).id}
 function addAudio(id,name,blob){const o=document.createElement('option');o.value=id;o.textContent=name;$('#aSel').prepend(o);$('#aSel').value=id;$('#aPrev').src=URL.createObjectURL(blob)}
@@ -149,12 +156,12 @@ $('#go').onclick=()=>MODE==='echo'?toggleEcho():MODE==='stream'?runStream():runN
 const MIC_MSG='The microphone needs HTTPS (or localhost). Open the https:// link to record or use echo.';
 const micOK=()=>!!(window.isSecureContext&&navigator.mediaDevices&&navigator.mediaDevices.getUserMedia&&window.AudioWorkletNode);
 const CAP=`registerProcessor('cap',class extends AudioWorkletProcessor{process(i){const c=i[0]&&i[0][0];if(c)this.port.postMessage(c.slice(0));return true}})`;
-async function openMic(onFrame){  // calls onFrame(Float32Array) at the AudioContext's native rate
+async function openMic(onFrame){  // onFrame(Float32Array, rms) at the AudioContext's native rate
   const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
   const ctx=new AudioContext();
   try{await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([CAP],{type:'text/javascript'})));
     const node=new AudioWorkletNode(ctx,'cap'),sink=ctx.createGain();sink.gain.value=0;
-    node.port.onmessage=e=>{const x=e.data;let s=0;for(let i=0;i<x.length;i++)s+=x[i]*x[i];$('#lvl').style.width=Math.min(100,Math.sqrt(s/x.length)*400)+'%';onFrame(x)};
+    node.port.onmessage=e=>{const x=e.data;let s=0;for(let i=0;i<x.length;i++)s+=x[i]*x[i];const rms=Math.sqrt(s/x.length);$('#lvl').style.width=Math.min(100,rms*400)+'%';onFrame(x,rms)};
     ctx.createMediaStreamSource(stream).connect(node);node.connect(sink);sink.connect(ctx.destination);
     if(ctx.state==='suspended')await ctx.resume();
   }catch(e){stream.getTracks().forEach(t=>t.stop());ctx.close();throw e}
@@ -167,13 +174,20 @@ function wavBlob(parts,rate){const pcm=toI16(parts),d=new DataView(new ArrayBuff
   str(0,'RIFF');d.setUint32(4,36+pcm.byteLength,true);str(8,'WAVE');str(12,'fmt ');d.setUint32(16,16,true);d.setUint16(20,1,true);d.setUint16(22,1,true);
   d.setUint32(24,rate,true);d.setUint32(28,2*rate,true);d.setUint16(32,2,true);d.setUint16(34,16,true);str(36,'data');d.setUint32(40,pcm.byteLength,true);
   return new Blob([d.buffer,pcm.buffer],{type:'audio/wav'})}
+async function to16k(parts,rate){  // the model uses 16 kHz; resampling here also makes the upload 3x smaller
+  let n=0;for(const p of parts)n+=p.length;const x=new Float32Array(n);let o=0;for(const p of parts){x.set(p,o);o+=p.length}
+  if(rate===16000)return x;
+  const oc=new OfflineAudioContext(1,Math.ceil(n*16000/rate),16000),b=oc.createBuffer(1,n,rate);b.copyToChannel(x,0);
+  const src=oc.createBufferSource();src.buffer=b;src.connect(oc.destination);src.start();return (await oc.startRendering()).getChannelData(0)}
+async function uploadWav(parts,rate,name){const x=await to16k(parts,rate),blob=wavBlob([x],16000);
+  return {id:await upload(new File([blob],name,{type:'audio/wav'})),blob,secs:x.length/16000}}
 
 const REC_MAX_S=120;
 $('#recBtn').onclick=async()=>{
   if(rec){const r=rec;rec=null;clearInterval(r.timer);r.mic.stop();$('#recBtn').textContent='● Record';$('#recBtn').classList.remove('live');
-    const secs=r.n/r.mic.rate;if(secs<0.3){$('#recInfo').textContent='Too short, try again';return}
-    $('#recInfo').textContent='Uploading…';const blob=wavBlob(r.parts,r.mic.rate);
-    try{addAudio(await upload(new File([blob],'recording.wav',{type:'audio/wav'})),`Recorded ${f1(secs)} s`,blob);$('#recInfo').textContent=`Recorded ${f1(secs)} s, selected above`}
+    if(r.n/r.mic.rate<0.3){$('#recInfo').textContent='Too short, try again';return}
+    $('#recInfo').textContent='Uploading…';
+    try{const u=await uploadWav(r.parts,r.mic.rate,'recording.wav');addAudio(u.id,`Recorded ${f1(u.secs)} s`,u.blob);$('#recInfo').textContent=`Recorded ${f1(u.secs)} s, selected above`}
     catch(e){$('#recInfo').textContent='Upload failed: '+e.message}return}
   if(!micOK()){$('#recInfo').textContent=MIC_MSG;return}
   const r={parts:[],n:0,t0:performance.now()};
@@ -186,76 +200,109 @@ const MIME='video/mp4; codecs="avc1.64001e, mp4a.40.2"';
 function makePlayer(v){
   if(!window.MediaSource||!MediaSource.isTypeSupported(MIME))throw new Error('MediaSource not supported in this browser');
   const ms=new MediaSource();v.src=URL.createObjectURL(ms);v.play().catch(()=>{});
-  let sb=null,q=[],ts=0,ended=false,trimmed=0;
+  let sb=null,q=[],ts=0,ended=false;
   const pump=()=>{if(!sb||sb.updating||ms.readyState!=='open')return;const s=q.shift();
     if(s){sb.timestampOffset=s.ts;sb.appendBuffer(s.bytes);v.play().catch(()=>{});return}
-    if(ended){try{ms.endOfStream()}catch(_){}return}
-    if(v.currentTime-trimmed>30){trimmed=v.currentTime-10;sb.remove(0,trimmed)}};  // long echo sessions: drop old video
+    if(ended)try{ms.endOfStream()}catch(_){}};
   ms.addEventListener('sourceopen',()=>{sb=ms.addSourceBuffer(MIME);sb.mode='segments';sb.addEventListener('updateend',pump);pump()},{once:true});
-  const lag=()=>v.buffered.length?v.buffered.end(v.buffered.length-1)-v.currentTime:0;
-  return {push(bytes,dur){q.push({bytes,ts});ts+=dur;pump()},end(){ended=true;pump()},lag,
-    catchUp(max){if(lag()>max)v.currentTime=v.buffered.end(v.buffered.length-1)-0.3}};  // live: jump back near the newest chunk
+  return {push(bytes,dur){q.push({bytes,ts});ts+=dur;pump()},end(){ended=true;pump()}};
 }
 const openWS=path=>{const ws=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}${path}`);ws.binaryType='arraybuffer';return ws};
 const CHUNK_HEAD='<tr><th>#</th><th>Audio ready</th><th>Chunk ready</th><th>Latency</th><th>Compute</th><th>Encode</th><th>Gen FPS</th></tr>';
 function logChunk(m){const t=$('#chunkLog');t.insertAdjacentHTML('beforeend',`<tr><td>${m.index+1}</td><td>${f3(m.available_at_s)} s</td><td>${f3(m.ready_at_s)} s</td><td>${ms(m.latency_s)}</td><td>${ms(m.compute_s)}</td><td>${ms(m.encode_s)}</td><td>${f1(m.frames/m.compute_s)}</td></tr>`);
   if(t.rows.length>300)t.deleteRow(1);t.parentElement.scrollTop=t.parentElement.scrollHeight}
-
-async function runNonStream(){
-  $('#go').disabled=true;$('#status').textContent='Generating full video…';$('#chunkLog').innerHTML='';live({});const t0=performance.now();
-  try{const r=await fetch('/api/nonstream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({audio:$('#aSel').value,image:imageId,size:SIZE})});
-    if(!r.ok)throw new Error(await r.text());const d=await r.json();const wait=(performance.now()-t0)/1000;
-    $('#out').src=d.url;$('#out').play().catch(()=>{});
-    live({'Time to first frame (client)':f3(wait)+' s','Generate':f3(d.generate_s)+' s','RTF':f3(d.rtf),'Gen FPS':f1(d.fps),'MP4 encode':f3(d.encode_s)+' s','Audio':f1(d.audio_s)+' s'});
-    $('#status').textContent=`Done: ${d.chunks} chunks, ${d.frames} frames at ${d.size}×${d.size}.`}
-  catch(e){$('#status').textContent='Error: '+e.message}finally{$('#go').disabled=false}}
-
-function runStream(){
-  let player;try{player=makePlayer($('#out'))}catch(e){$('#status').textContent=e.message;return}
-  $('#go').disabled=true;$('#chunkLog').innerHTML=CHUNK_HEAD;live({});
-  const tReq=performance.now();let startInfo=null,meta=null,meta0=null,firstPlay=null,n=0,lat=[];
-  $('#out').addEventListener('playing',()=>{if(firstPlay==null){firstPlay=(performance.now()-tReq)/1000;upd()}},{once:true});
-  const upd=e=>{if(!startInfo)return;live({'TTFA frames':meta0?f3(meta0.frames_ready_at_s)+' s':'…','TTFA A/V (server)':meta0?f3(meta0.ready_at_s)+' s':'…','First frame on screen':firstPlay!=null?f3(firstPlay)+' s':'…','Chunks':`${n}/${startInfo.chunks}`,'Latency p50':lat.length?ms(med(lat)):'–','RTF':e?f3(e.rtf):'…','Gen FPS':e?f1(e.fps):'…'})};
+// one 'playing' / 'ended' listener; each playback swaps in its own hooks so stale sessions do nothing
+let vHooks={};
+$('#out').addEventListener('playing',()=>{const f=vHooks.playing;vHooks.playing=null;f&&f()});
+$('#out').addEventListener('ended',()=>{const f=vHooks.ended;vHooks.ended=null;f&&f()});
+function playStream(audio,realtime,h={}){  // stream an uploaded / test clip via /ws/stream into the player; returns the socket
+  const v=$('#out');v.poster=$('#iPrev').src;const player=makePlayer(v),tReq=performance.now();let meta=null,closed=false;
+  vHooks={playing:()=>h.onPlaying&&h.onPlaying((performance.now()-tReq)/1000),ended:()=>h.onEnded&&h.onEnded()};
   const ws=openWS('/ws/stream');
-  ws.onopen=()=>{ws.send(JSON.stringify({audio:$('#aSel').value,image:imageId,realtime:$('#rt').checked,size:SIZE}));$('#status').textContent='Preparing reference image…'};
+  ws.onopen=()=>ws.send(JSON.stringify({audio,image:imageId,realtime,size:SIZE,fps:FPS}));
   ws.onmessage=ev=>{
     if(typeof ev.data!=='string'){player.push(ev.data,meta.frames/meta.fps);return}
     const m=JSON.parse(ev.data);
-    if(m.type==='start'){startInfo=m;$('#status').textContent=`Streaming ${m.chunks} chunks at ${m.size}×${m.size} (${m.realtime?'real-time audio feed':'as fast as possible'})…`;upd()}
-    else if(m.type==='chunk'){meta=m;if(!meta0)meta0=m;n++;lat.push(m.latency_s);logChunk(m);upd()}
-    else if(m.type==='end'){player.end();upd(m);$('#status').textContent=`Done. Wall ${f3(m.wall_s)} s.`;$('#go').disabled=false}
-    else if(m.type==='error'){$('#status').textContent='Error: '+m.message;$('#go').disabled=false}};
-  ws.onclose=()=>{$('#go').disabled=false};
+    if(m.type==='start')h.onStart&&h.onStart(m);
+    else if(m.type==='chunk'){meta=m;h.onChunk&&h.onChunk(m)}
+    else if(m.type==='end'){closed=true;player.end();h.onEnd&&h.onEnd(m)}
+    else if(m.type==='error'){closed=true;h.onError&&h.onError(m.message)}};
+  ws.onclose=()=>{if(!closed){closed=true;h.onError&&h.onError('connection closed')}};
+  return ws;
 }
 
-// ---------------- echo: live mic -> server (int16 PCM) -> avatar repeats it chunk by chunk
+async function runNonStream(){
+  $('#go').disabled=true;$('#status').textContent='Generating full video…';$('#chunkLog').innerHTML='';live({});const t0=performance.now();
+  try{const r=await fetch('/api/nonstream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({audio:$('#aSel').value,image:imageId,size:SIZE,fps:FPS})});
+    if(!r.ok)throw new Error(await r.text());const d=await r.json();const wait=(performance.now()-t0)/1000;
+    $('#out').src=d.url;$('#out').play().catch(()=>{});
+    live({'Time to first frame (client)':f3(wait)+' s','Generate':f3(d.generate_s)+' s','RTF':f3(d.rtf),'Gen FPS':f1(d.fps),'MP4 encode':f3(d.encode_s)+' s','Audio':f1(d.audio_s)+' s'});
+    $('#status').textContent=`Done: ${d.chunks} chunks, ${d.frames} frames at ${d.size}×${d.size}, ${d.video_fps} fps.`}
+  catch(e){$('#status').textContent='Error: '+e.message}finally{$('#go').disabled=false}}
+
+function runStream(){
+  $('#go').disabled=true;$('#chunkLog').innerHTML=CHUNK_HEAD;live({});
+  let startInfo=null,meta0=null,firstPlay=null,n=0,lat=[];
+  const upd=e=>{if(!startInfo)return;live({'TTFA frames':meta0?f3(meta0.frames_ready_at_s)+' s':'…','TTFA A/V (server)':meta0?f3(meta0.ready_at_s)+' s':'…','First frame on screen':firstPlay!=null?f3(firstPlay)+' s':'…','Chunks':`${n}/${startInfo.chunks}`,'Latency p50':lat.length?ms(med(lat)):'–','RTF':e?f3(e.rtf):'…','Gen FPS':e?f1(e.fps):'…'})};
+  try{playStream($('#aSel').value,$('#rt').checked,{
+      onStart:m=>{startInfo=m;$('#status').textContent=`Streaming ${m.chunks} chunks at ${m.size}×${m.size}, ${m.fps} fps (${m.realtime?'real-time audio feed':'as fast as possible'})…`;upd()},
+      onChunk:m=>{if(!meta0)meta0=m;n++;lat.push(m.latency_s);logChunk(m);upd()},
+      onPlaying:t=>{firstPlay=t;upd()},
+      onEnd:m=>{upd(m);$('#status').textContent=`Done. Wall ${f3(m.wall_s)} s.`;$('#go').disabled=false},
+      onError:msg=>{$('#status').textContent='Error: '+msg;$('#go').disabled=false}});
+    $('#status').textContent='Preparing reference image…'}
+  catch(e){$('#status').textContent=e.message;$('#go').disabled=false}
+}
+
+// ---------------- echo: listen -> a pause ends the sentence -> the avatar repeats it (mic ignored meanwhile)
+const PRE_S=0.3, MIN_SPEECH_S=0.12, TAIL_S=0.3, MAX_UTT_S=30;
+const pauseS=()=>{const v=parseFloat($('#pause').value);return isFinite(v)?Math.min(5,Math.max(0.3,v)):1.5};
 async function toggleEcho(){
-  if(echo){echo.stop();return}
+  if(echo){echo.stop('Stopped.');return}
   if(!micOK()){$('#status').textContent=MIC_MSG;return}
-  let player;try{player=makePlayer($('#out'))}catch(e){$('#status').textContent=e.message;return}
-  const E={parts:[],n:0,sent:0,ready:false,stopped:false,lat:[],comp:[],chunks:0,meta:null,ws:null,mic:null};echo=E;
-  $('#go').textContent=goLabel();$('#go').classList.add('live');$('#chunkLog').innerHTML=CHUNK_HEAD;live({});$('#status').textContent='Opening microphone…';
-  const finish=msg=>{if(echo!==E)return;echo=null;clearInterval(E.timer);if(E.mic)E.mic.stop();player.end();
-    $('#go').textContent=goLabel();$('#go').classList.remove('live');$('#go').disabled=false;if(msg)$('#status').textContent=msg};
-  const flush=()=>{if(!E.n||!E.ws||E.ws.readyState!==1)return;E.ws.send(toI16(E.parts).buffer);E.sent+=E.n/E.mic.rate;E.parts=[];E.n=0};
-  const upd=()=>live({'Chunks':E.chunks,'Audio sent':f1(E.sent)+' s','Server latency p50':E.lat.length?ms(med(E.lat)):'–',
-    'Echo delay (est.)':E.lat.length?f3((E.meta.frames/E.meta.fps)+med(E.lat))+' s':'–','Compute p50':E.comp.length?ms(med(E.comp)):'–','Player buffer':f3(player.lag())+' s'});
-  E.stop=()=>{if(E.stopped)return;E.stopped=true;flush();if(E.mic)E.mic.stop();
-    if(E.ws&&E.ws.readyState===1){E.ws.send(JSON.stringify({type:'stop'}));$('#go').disabled=true;$('#status').textContent='Finishing the last chunk…'}else finish('Stopped.')};
-  try{E.mic=await openMic(x=>{if(!E.ready||E.stopped)return;E.parts.push(x);E.n+=x.length;if(E.n>=E.mic.rate*0.1)flush()})}
-  catch(e){finish('Mic error: '+e.message);return}
-  if(E.stopped){finish('Stopped.');return}
-  const ws=E.ws=openWS('/ws/echo');
-  ws.onopen=()=>{ws.send(JSON.stringify({image:imageId,size:SIZE,sample_rate:E.mic.rate}));$('#status').textContent='Preparing reference image…'};
-  ws.onmessage=ev=>{
-    if(typeof ev.data!=='string'){player.push(ev.data,E.meta.frames/E.meta.fps);return}
-    const m=JSON.parse(ev.data);
-    if(m.type==='start'){E.ready=true;$('#status').textContent=`Listening (${m.size}×${m.size}, mic ${E.mic.rate} Hz). Speak now; click Stop when done (max ${Math.round(m.max_s/60)} min).`;upd()}
-    else if(m.type==='chunk'){E.meta=m;E.chunks++;E.lat.push(m.latency_s);E.comp.push(m.compute_s);logChunk(m);upd()}
-    else if(m.type==='end'){upd();finish(`Echo ended (${m.reason}): ${m.chunks} chunks, ${f1(m.audio_s)} s of audio, RTF ${f3(m.rtf)}.`)}
-    else if(m.type==='error')finish('Error: '+m.message)};
-  ws.onclose=()=>finish('Connection closed.');
-  E.timer=setInterval(()=>{player.catchUp(3);upd()},1000);
+  const E={busy:true,stopped:false,ws:null,mic:null,replies:0,lat:[],last:{}};echo=E;
+  $('#go').textContent=goLabel();$('#go').classList.add('live');$('#chunkLog').innerHTML=CHUNK_HEAD;live({});
+  const say=t=>{if(echo===E)$('#status').textContent=t};
+  const upd=()=>{if(echo===E)live({'Replies':E.replies,'Last sentence':E.last.secs!=null?f1(E.last.secs)+' s':'–','Pause used':E.last.pause!=null?f1(E.last.pause)+' s':'–',
+    'Pause end → avatar starts':E.last.start!=null?f3(E.last.start)+' s':'–','Speech end → avatar starts':E.last.start!=null?f3(E.last.start+E.last.pause)+' s':'–',
+    'Chunk latency p50':E.lat.length?ms(med(E.lat)):'–','RTF (last)':E.last.rtf!=null?f3(E.last.rtf):'–'})};
+  let V={},noise=0.003;
+  const listen=()=>{V={speaking:false,pre:[],preN:0,utt:[],uttN:0,score:0,sil:0};E.busy=false;say('Listening… speak a sentence, then pause.')};
+  E.stop=msg=>{if(echo!==E)return;$('#status').textContent=msg;echo=null;E.stopped=true;clearInterval(E.timer);clearTimeout(E.fallback);
+    if(E.mic)E.mic.stop();if(E.ws&&E.ws.readyState<2)E.ws.close();$('#go').textContent=goLabel();$('#go').classList.remove('live');$('#go').disabled=false};
+  const reply=async()=>{
+    E.busy=true;const r=E.mic.rate,pause=pauseS();
+    const keep=Math.min(V.uttN,V.uttN-V.sil+Math.round(r*TAIL_S));  // drop the pause, keep a short tail
+    const parts=[];let left=keep;for(const p of V.utt){if(left<=0)break;parts.push(left>=p.length?p:p.subarray(0,left));left-=p.length}
+    const tEnd=performance.now();say('Pause detected. The avatar is repeating…');
+    let up;try{up=await uploadWav(parts,r,'echo.wav')}catch(e){say('Upload failed: '+e.message);setTimeout(()=>{if(!E.stopped)listen()},1500);return}
+    if(E.stopped)return;
+    E.last={secs:up.secs,pause};E.replies++;upd();
+    let done=false;const next=()=>{if(done||E.stopped)return;done=true;clearTimeout(E.fallback);listen();upd()};
+    try{E.ws=playStream(up.id,$('#rt').checked,{
+      onPlaying:()=>{E.last.start=(performance.now()-tEnd)/1000;say('Avatar is speaking…');upd()},
+      onChunk:m=>{E.lat.push(m.latency_s);logChunk(m);upd()},
+      onEnd:m=>{E.last.rtf=m.rtf;upd();E.fallback=setTimeout(next,(up.secs+5)*1000)},  // in case 'ended' never fires
+      onEnded:next,
+      onError:msg=>{say('Error: '+msg);setTimeout(next,1500)}})}
+    catch(e){E.stop(e.message)}
+  };
+  const onFrame=(x,rms)=>{
+    if(E.busy||E.stopped)return;  // avatar's turn: ignore the mic so its voice is not echoed back
+    const r=E.mic.rate,loud=rms>Math.max(0.01,noise*4);
+    if(!V.speaking){  // wait for speech; keep 0.3 s before it so the first syllable is not cut
+      if(!loud)noise=noise*0.995+rms*0.005;
+      V.pre.push(x);V.preN+=x.length;while(V.preN-V.pre[0].length>=r*PRE_S)V.preN-=V.pre.shift().length;
+      V.score=loud?V.score+x.length:Math.max(0,V.score-x.length);
+      if(V.score>=r*MIN_SPEECH_S){V.speaking=true;V.utt=V.pre;V.uttN=V.preN;V.pre=[];V.sil=0}
+      return}
+    V.utt.push(x);V.uttN+=x.length;V.sil=loud?0:V.sil+x.length;
+    if(V.sil>=r*pauseS()||V.uttN>=r*MAX_UTT_S)reply();
+  };
+  try{E.mic=await openMic(onFrame)}catch(e){E.stop('Mic error: '+e.message);return}
+  if(E.stopped){E.mic.stop();return}
+  E.timer=setInterval(()=>{if(V.speaking&&!E.busy){const r=E.mic.rate;say(`Hearing you… ${f1(V.uttN/r)} s`+(V.sil>r*0.3?` · pause ${f1(V.sil/r)} / ${f1(pauseS())} s`:''))}},200);
+  listen();
 }
 loadBench().then(initGen).catch(e=>{$('#srv').textContent='error: '+e;initGen()});
 </script>
