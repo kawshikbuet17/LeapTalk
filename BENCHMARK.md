@@ -106,6 +106,37 @@ Short clips have slightly higher RTF because the last chunk is padded up to a fu
 - **Encode off the GPU thread.** The demo's serial encode turns a real-time 512 model into a stuttering stream on a busy CPU.
 - **The README's "up to 200 FPS" holds at 256×256** (213 FPS streaming, 262 FPS non-stream). At 512×512 it is ~60 FPS.
 
+## Web UI
+
+`bench/ui_server.py` serves one page with two tabs.
+
+- **Benchmark**: the tables above, per-clip results and sample videos.
+- **Generate**: pick 256² or 512², then a mode:
+  - **Stream**: chunk-by-chunk playback, with audio fed at 1× like live TTS.
+  - **Non-stream**: the whole clip at once, then play.
+  - **Echo (live mic)**: talk, and the avatar repeats what you say about 2 s later.
+  - Audio for Stream and Non-stream can be a test clip, an uploaded file, or a mic recording.
+
+```
+browser ───── https / wss ─────> ui_server.py (port 8075)
+  mic PCM (echo) ──────────────>   resample to 16 kHz -> 1.12 s chunk -> DiT + VAE (GPU)
+  <──────────── fMP4 chunk ─────   h264 + aac encode on a CPU thread (overlaps the next chunk)
+```
+
+- **Settings** are in `bench/.env`. It is gitignored; copy `bench/.env.example` to create it.
+
+  | Variable | Meaning |
+  |---|---|
+  | `LEAPTALK_UI_SCHEME` | `https` or `http` |
+  | `LEAPTALK_UI_PORT` | port to serve on |
+  | `LEAPTALK_UI_DOMAIN` | domain shown in the startup URL |
+  | `LEAPTALK_UI_SSL_CERT`, `LEAPTALK_UI_SSL_KEY` | full-chain certificate and its key (https only) |
+
+  `--scheme` and `--port` override the file.
+- **Mic needs HTTPS.** Browsers allow the mic only on https or localhost. Over plain http, Record and Echo are turned off.
+- **Echo latency** (512², Lite + compile, 48 kHz mic audio at 1×): ~0.97 s from a full 1.12 s of audio to a playable chunk. Compute is ~0.43 s per chunk. Mouth to avatar is about 1.12 + 0.97 ≈ 2.1 s.
+- **One session at a time.** An echo session holds the GPU, so other requests get "busy". A session stops after 10 min.
+
 ## Reproduce
 
 ```bash
@@ -114,8 +145,9 @@ bash bench/run_all.sh              # 512: all 4 configs; pauses/unpauses the 409
 CONFIGS="lite_c0_256:1:off:256:2 lite_c1_256:1:on:256:2 pro_c0_256:0:off:256:1 pro_c1_256:0:on:256:1" \
   bash bench/run_all.sh            # 256: same matrix (format tag:lite:compile:size:repeats)
 python bench/make_report.py        # tables from bench/results/*.json
+cp bench/.env.example bench/.env  # web UI settings: scheme, port, domain, cert + key
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-  python bench/ui_server.py --port 8075 --lite 1 --compile on   # viewer + live demo (stream/non-stream, 256 or 512)
+  python bench/ui_server.py --lite 1 --compile on   # web UI; add --scheme http to skip TLS
 ```
 
 Raw results are in `bench/results/*.json`, and the generated videos are in `bench/outputs/<config>/` (`*_256` for 256×256).
