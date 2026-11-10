@@ -111,12 +111,15 @@ Short clips have slightly higher RTF because the last chunk is padded up to a fu
 `bench/ui_server.py` serves one page with two tabs.
 
 - **Benchmark**: the tables above, per-clip results and sample videos.
-- **Generate**: pick 256² or 512², a frame rate, then a mode:
+- **Generate**: pick 256² or 512², a frame rate, then a mode. The default reference image is `bench/avatar_512x512.png`, and you can upload your own. The benchmark itself used `assets/photo.jpg`.
   - **Stream**: chunk-by-chunk playback, with audio fed at 1× like live TTS.
   - **Non-stream**: the whole clip at once, then play.
   - **Echo (mic)**: say a sentence and stop talking. After a pause (default 1.5 s, adjustable from 0.3 to 5 s) the avatar repeats the whole sentence. The mic is ignored while the avatar talks, so its voice is not echoed back.
   - Audio for Stream and Non-stream can be a test clip, an uploaded file, or a mic recording.
-  - **Real-time speed** (Stream and Echo): when on, the audio is fed at 1× like live TTS. When off, it is generated as fast as possible.
+  - **Real-time speed** (Stream and Echo, off by default): when on, the audio is fed at 1× like live TTS. When off, it is generated as fast as possible.
+  - **Crop to face** (optional, off by default): crops a square around the face before generating. **Face ratio** (1.5 to 3.0, default 2.0) sets how much space is kept around the face, and a preview shows the crop. If no face is found, the full image is used.
+    - Upstream's crop (`--use_face_crop`) uses an old mediapipe API that the pinned mediapipe 0.10.35 no longer has, so it silently falls back to the full image.
+    - The UI uses OpenCV's built-in face detector instead, with the same framing as upstream.
 
 ```
  Echo:  mic ──> browser: detect speech, wait for the pause, resample to 16 kHz
@@ -127,6 +130,8 @@ Short clips have slightly higher RTF because the last chunk is padded up to a fu
                   v
         browser plays the chunks as they arrive (MSE)
 ```
+
+Stream and Echo get their chunks over one long HTTPS response (`POST /api/stream`), not a WebSocket. This way they keep working when the browser has only accepted the certificate with a warning, which blocks WebSockets.
 
 **Echo latency** (512², 25 fps, Lite + compile, 4.5 s sentence). The time is measured from the end of the pause to the first video chunk, and the upload takes ~70 ms.
 

@@ -22,8 +22,8 @@ from pathlib import Path
 
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -33,7 +33,10 @@ from lt_core import ROOT, LeapTalkRunner
 BENCH = ROOT / "bench"
 RUNTIME = BENCH / "runtime" / "ui"
 UPLOADS = RUNTIME / "uploads"
-for d in (RUNTIME, UPLOADS):
+CROPS = RUNTIME / "crops"
+# default reference image of the UI (the benchmark itself keeps lt_core.DEFAULT_IMAGE = assets/photo.jpg)
+UI_IMAGE = BENCH / "avatar_512x512.png" if (BENCH / "avatar_512x512.png").is_file() else lt_core.DEFAULT_IMAGE
+for d in (RUNTIME, UPLOADS, CROPS):
     d.mkdir(parents=True, exist_ok=True)
 (BENCH / "outputs").mkdir(exist_ok=True)
 
@@ -89,11 +92,43 @@ def resolve_audio(audio: str) -> Path:
 
 def resolve_image(image: str | None) -> Path:
     if not image or image == "default":
-        return lt_core.DEFAULT_IMAGE
+        return UI_IMAGE
     p = UPLOADS / Path(image).name
     if not p.exists():
         raise HTTPException(404, "image not found")
     return p
+
+
+FACE_RATIO = (1.2, 4.0)  # allowed face-crop ratios (upstream suggests 1.5-3.0)
+_crops: dict = {}  # (image stem, ratio) -> (image to use, info); uploads never change, so this stays valid
+
+
+def resolve_face_ratio(ratio) -> float | None:
+    if ratio in (None, "", 0, False):
+        return None
+    ratio = round(float(ratio), 2)
+    if not FACE_RATIO[0] <= ratio <= FACE_RATIO[1]:
+        raise HTTPException(400, f"face_crop ratio must be in {FACE_RATIO}")
+    return ratio
+
+
+def face_cropped(image_path: Path, ratio: float | None) -> tuple[Path, dict | None]:
+    """Image to condition on, plus crop info for the page. No face -> the full image is used."""
+    if ratio is None:
+        return image_path, None
+    key = (image_path.stem, ratio)
+    if key not in _crops:
+        out = CROPS / f"{image_path.stem}_{ratio:.2f}.png"
+        info = lt_core.crop_to_face(image_path, ratio, out)
+        info["ratio"] = ratio
+        if info["found"]:
+            info["url"] = f"/runtime/crops/{out.name}"
+        _crops[key] = (out if info["found"] else image_path, info)
+    return _crops[key]
+
+
+def log(msg: str) -> None:
+    print(f"{time.strftime('%H:%M:%S')} {msg}", flush=True)
 
 
 async def on_gpu(fn, *a):
@@ -129,7 +164,7 @@ def bench_audio(i: int):
 
 @app.get("/media/default_image")
 def default_image():
-    return FileResponse(lt_core.DEFAULT_IMAGE)
+    return FileResponse(UI_IMAGE)
 
 
 @app.post("/api/upload")
@@ -140,23 +175,45 @@ async def upload(file: UploadFile = File(...)):
     return {"id": name}
 
 
+@app.post("/api/client_log")
+async def client_log(request: Request):
+    """Errors seen in the browser, so they show up in logs/ui.log."""
+    who = request.client.host if request.client else "?"
+    log(f"browser {who}: {(await request.body())[:1000].decode(errors='replace')}")
+    return {}
+
+
+class FaceCropReq(BaseModel):
+    image: str | None = None
+    ratio: float = 2.0
+
+
+@app.post("/api/face_crop")
+async def face_crop_preview(req: FaceCropReq):
+    image_path, ratio = resolve_image(req.image), resolve_face_ratio(req.ratio)
+    _, info = await asyncio.get_running_loop().run_in_executor(None, face_cropped, image_path, ratio)
+    return info
+
+
 class NonStreamReq(BaseModel):
     audio: str
     image: str | None = None
     size: int = 512
     fps: int = 25
+    face_crop: float | None = None  # face ratio; None = use the image as is
 
 
 @app.post("/api/nonstream")
 async def nonstream(req: NonStreamReq):
     audio_path, image_path = resolve_audio(req.audio), resolve_image(req.image)
-    size, fps = resolve_size(req.size), resolve_fps(req.fps)
+    size, fps, ratio = resolve_size(req.size), resolve_fps(req.fps), resolve_face_ratio(req.face_crop)
 
     def job():
         r = runner
         t0 = time.perf_counter()
+        image, face = face_cropped(image_path, ratio)
         audio = r.load_audio(str(audio_path))
-        state, prep = r.prepare(image_path, size, fps)
+        state, prep = r.prepare(image, size, fps)
         frames, d = r.generate_full(state, audio)
         t_enc = time.perf_counter()
         name = f"ns_{uuid.uuid4().hex[:10]}.mp4"
@@ -176,6 +233,7 @@ async def nonstream(req: NonStreamReq):
             "chunks": len(d["chunks"]),
             "size": size,
             "video_fps": fps,
+            "face": face,
         }
 
     async with gpu_lock:
@@ -185,11 +243,27 @@ async def nonstream(req: NonStreamReq):
 _background: set = set()  # keeps cleanup tasks referenced until they finish
 
 
+class Frames:
+    """Messages for one streaming response: 1 byte kind (0 = JSON, 1 = fMP4 chunk), 4 byte big-endian
+    length, payload. Sent as one chunked HTTPS response instead of a WebSocket, because browsers that
+    accept an expired or untrusted certificate for the page can still block WebSockets to that host."""
+
+    def __init__(self):
+        self.q: asyncio.Queue = asyncio.Queue()
+
+    def json(self, obj: dict) -> None:
+        b = json.dumps(obj).encode()
+        self.q.put_nowait(b"\x00" + len(b).to_bytes(4, "big") + b)
+
+    def video(self, b: bytes) -> None:
+        self.q.put_nowait(b"\x01" + len(b).to_bytes(4, "big") + b)
+
+
 class ChunkSender:
     """GPU makes chunk k+1 while a CPU thread encodes chunk k; then sends JSON meta + fMP4 bytes."""
 
-    def __init__(self, ws: WebSocket, r: LeapTalkRunner, t_req: float):
-        self.ws, self.r, self.t_req = ws, r, t_req
+    def __init__(self, out: Frames, r: LeapTalkRunner, t_req: float):
+        self.out, self.r, self.t_req = out, r, t_req
         self.t0 = time.perf_counter()  # audio stream start
         self.out_dir = RUNTIME / f"st_{uuid.uuid4().hex[:10]}"
         self.out_dir.mkdir()
@@ -199,7 +273,7 @@ class ChunkSender:
         self.task = asyncio.create_task(self._send())
 
     async def add(self, state, sl: np.ndarray, avail: float) -> None:
-        if self.task.done():  # the sender failed (client gone): raise its error and stop generating
+        if self.task.done():  # the sender failed: raise its error and stop generating
             self.task.result()
         r = self.r
         frames, stg = await on_gpu(r.stream_chunk, state, sl)
@@ -220,8 +294,8 @@ class ChunkSender:
             ready = time.perf_counter() - self.t0
             meta.update(encode_s=enc, ready_at_s=ready, latency_s=ready - meta["available_at_s"],
                         since_request_s=time.perf_counter() - self.t_req)
-            await self.ws.send_text(json.dumps(meta))
-            await self.ws.send_bytes(path.read_bytes())
+            self.out.json(meta)
+            self.out.video(path.read_bytes())
             path.unlink(missing_ok=True)
 
     async def finish(self) -> None:
@@ -231,7 +305,7 @@ class ChunkSender:
     def cancel(self) -> None:
         if self.task.done():
             if not self.task.cancelled():
-                self.task.exception()  # mark a send error (client gone) as handled
+                self.task.exception()  # mark a send error as handled
         else:
             self.task.cancel()
         t = asyncio.get_running_loop().create_task(self._cleanup(list(self.encoding)))
@@ -244,57 +318,73 @@ class ChunkSender:
         shutil.rmtree(self.out_dir, ignore_errors=True)
 
 
-async def report_error(ws: WebSocket, e: Exception) -> None:
-    try:
-        await ws.send_text(json.dumps({"type": "error", "message": f"{type(e).__name__}: {e}"}))
-    except Exception:
-        pass
+class StreamReq(BaseModel):
+    audio: str
+    image: str | None = None
+    realtime: bool = True
+    size: int = 512
+    fps: int = 25
+    face_crop: float | None = None  # face ratio; None = use the image as is
 
 
-@app.websocket("/ws/stream")
-async def ws_stream(ws: WebSocket):
-    await ws.accept()
-    out = None
+async def run_stream(req: StreamReq, out: Frames, who: str) -> None:
+    """Chunk-by-chunk generation; writes start / chunk + video / end (or error) messages to `out`."""
+    sender = None
     try:
-        req = json.loads(await ws.receive_text())
-        audio_path, image_path = resolve_audio(req["audio"]), resolve_image(req.get("image"))
-        realtime = bool(req.get("realtime", True))
-        size, fps = resolve_size(req.get("size")), resolve_fps(req.get("fps"))
+        audio_path, image_path = resolve_audio(req.audio), resolve_image(req.image)
+        size, fps, ratio = resolve_size(req.size), resolve_fps(req.fps), resolve_face_ratio(req.face_crop)
         r = runner
         async with gpu_lock:
             t_req = time.perf_counter()
+            image, face = await asyncio.get_running_loop().run_in_executor(None, face_cropped, image_path, ratio)
             audio = r.load_audio(str(audio_path))
-            state, prep = await on_gpu(r.prepare, image_path, size, fps)
+            state, prep = await on_gpu(r.prepare, image, size, fps)
             slices = r.split_slices(audio)
-            await ws.send_text(json.dumps({"type": "start", "chunks": len(slices), "prepare_s": prep,
-                                           "chunk_seconds": r.slice_seconds, "fps": r.fps,
-                                           "audio_s": len(audio) / r.sr, "realtime": realtime,
-                                           "size": size}))
+            out.json({"type": "start", "chunks": len(slices), "prepare_s": prep, "chunk_seconds": r.slice_seconds,
+                      "fps": r.fps, "audio_s": len(audio) / r.sr, "realtime": req.realtime, "size": size,
+                      "face": face})
             d = r.slice_seconds
-            out = ChunkSender(ws, r, t_req)
+            sender = ChunkSender(out, r, t_req)
             for k, sl in enumerate(slices):
-                if realtime:  # slice k is "available" once its audio has arrived at 1x speed
-                    wait = out.t0 + (k + 1) * d - time.perf_counter()
+                if req.realtime:  # slice k is "available" once its audio has arrived at 1x speed
+                    wait = sender.t0 + (k + 1) * d - time.perf_counter()
                     if wait > 0:
                         await asyncio.sleep(wait)
-                await out.add(state, sl, time.perf_counter() - out.t0)
-            await out.finish()
+                await sender.add(state, sl, time.perf_counter() - sender.t0)
+            await sender.finish()
             dur = len(audio) / r.sr
-            await ws.send_text(json.dumps({"type": "end", "compute_total_s": out.compute_s,
-                                           "rtf": out.compute_s / dur,
-                                           "fps": len(slices) * r.slice_frames / out.compute_s,
-                                           "wall_s": time.perf_counter() - out.t0}))
-    except WebSocketDisconnect:
-        return
+            out.json({"type": "end", "compute_total_s": sender.compute_s, "rtf": sender.compute_s / dur,
+                      "fps": len(slices) * r.slice_frames / sender.compute_s,
+                      "wall_s": time.perf_counter() - sender.t0})
+            log(f"stream done for {who}: {sender.n} chunks, {dur:.1f} s audio")
+    except asyncio.CancelledError:  # the client went away (closed the page, pressed Stop)
+        log(f"stream closed by {who} after {sender.n if sender else 0} chunks")
+        raise
     except Exception as e:  # surface errors to the page
-        await report_error(ws, e)
+        log(f"stream error for {who}: {type(e).__name__}: {e}")
+        out.json({"type": "error", "message": f"{type(e).__name__}: {getattr(e, 'detail', None) or e}"})
     finally:
-        if out:
-            out.cancel()
+        if sender:
+            sender.cancel()
+
+
+@app.post("/api/stream")
+async def stream(req: StreamReq, request: Request):
+    who = request.client.host if request.client else "?"
+    log(f"stream request from {who}: {req.model_dump()}")
+    out = Frames()
+    task = asyncio.create_task(run_stream(req, out, who))
+    task.add_done_callback(lambda _: out.q.put_nowait(None))
+
+    async def body():
         try:
-            await ws.close()
-        except Exception:
-            pass
+            while (item := await out.q.get()) is not None:
+                yield item
+        finally:  # response finished or the client disconnected: stop generating
+            task.cancel()
+
+    return StreamingResponse(body(), media_type="application/octet-stream",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 
 app.mount("/outputs", StaticFiles(directory=BENCH / "outputs"), name="outputs")
@@ -324,16 +414,16 @@ def main():
     warm = runner.load_audio(str(ROOT / "assets/news.wav"))[: runner.slice_samples * 4]
     for size in SIZES:  # each resolution has its own compiled graph
         for _ in range(2):
-            st, _ = runner.prepare(lt_core.DEFAULT_IMAGE, size)
+            st, _ = runner.prepare(UI_IMAGE, size)
             for sl in runner.split_slices(warm):
                 f, _ = runner.stream_chunk(st, sl)
             runner.encode_fmp4_chunk(f, sl, RUNTIME / "warm.mp4", True)
-            runner.generate_full(runner.prepare(lt_core.DEFAULT_IMAGE, size)[0], warm)
+            runner.generate_full(runner.prepare(UI_IMAGE, size)[0], warm)
         for fps in FPS_CHOICES:  # same graph; this only warms wav2vec at each feature length
-            st, _ = runner.prepare(lt_core.DEFAULT_IMAGE, size, fps)
+            st, _ = runner.prepare(UI_IMAGE, size, fps)
             for sl in runner.split_slices(warm)[:2]:
                 runner.stream_chunk(st, sl)
-        runner.prepare(lt_core.DEFAULT_IMAGE, size, 25)
+        runner.prepare(UI_IMAGE, size, 25)
         print(f"warm {size}x{size} done at {time.perf_counter() - t:.0f}s", flush=True)
     server_cfg = {"lite": bool(args.lite), "compile": args.compile, "steps": 1, "sizes": list(SIZES),
                   "fps_choices": list(FPS_CHOICES), "trained_fps": 25,
@@ -342,7 +432,9 @@ def main():
     print(f"ready: {server_cfg}", flush=True)
     print(f"URL: {scheme}://{env('LEAPTALK_UI_DOMAIN') or '<host>'}:{args.port}/", flush=True)
     ssl = {"ssl_certfile": cert, "ssl_keyfile": key} if scheme == "https" else {}
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning", **ssl)
+    # keep idle connections longer than browsers do (Chrome: up to 300 s); with uvicorn's default 5 s
+    # a POST sent on a connection the server is just closing fails in the browser with "Failed to fetch"
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info", timeout_keep_alive=330, **ssl)
 
 
 if __name__ == "__main__":

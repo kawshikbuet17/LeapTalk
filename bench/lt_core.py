@@ -50,6 +50,38 @@ def make_settings(lite: bool, compile_mode: str, steps: int = 1, cuda: str = "0"
     )
 
 
+def crop_to_face(src: str | Path, ratio: float, out_path: str | Path, size: int = 512) -> dict:
+    """Square crop around the largest face, then resize to size x size.
+
+    Same framing as upstream flash_head.utils.facecrop.get_scaled_bbox: side = face width x ratio,
+    55 % of it above the face centre. Upstream detects with mediapipe `solutions`, which the pinned
+    mediapipe 0.10.35 no longer has, so this uses OpenCV's bundled Haar face detector instead.
+    The box is shifted (not clipped) to stay inside the image, so the crop stays square.
+    Returns {"found": bool, "box": [x1, y1, x2, y2] | None}; without a face, nothing is written.
+    """
+    import cv2
+    from PIL import Image
+
+    img = Image.open(src).convert("RGB")
+    w, h = img.size
+    scale = min(1.0, 800 / max(w, h))  # detect on a smaller copy; faces in portraits are large
+    small = np.asarray(img.resize((max(1, round(w * scale)), max(1, round(h * scale)))))
+    gray = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
+    det = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    m = max(24, min(gray.shape) // 10)
+    faces = det.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(m, m))
+    if len(faces) == 0:
+        return {"found": False, "box": None}
+    fx, fy, fw, fh = (v / scale for v in max(faces, key=lambda f: f[2] * f[3]))
+    side = min(fw * float(ratio), w, h)
+    cx, cy = fx + fw / 2, fy + fh / 2
+    x1 = min(max(0.0, cx - side / 2), w - side)
+    y1 = min(max(0.0, cy - side * 0.55), h - side)
+    box = [int(round(x1)), int(round(y1)), int(round(x1 + side)), int(round(y1 + side))]
+    img.crop(box).resize((size, size), Image.LANCZOS).save(out_path)
+    return {"found": True, "box": box}
+
+
 class LeapTalkRunner:
     def __init__(self, lite: bool = True, compile_mode: str = "off", steps: int = 1, cuda: str = "0") -> None:
         self.settings = make_settings(lite, compile_mode, steps, cuda)
