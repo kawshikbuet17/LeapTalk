@@ -11,6 +11,8 @@ AUDIO_PROJ="${AUDIO_PROJ:-}"
 COMPILE="${COMPILE:-off}"
 NUM_INFERENCE_STEPS="${NUM_INFERENCE_STEPS:-1}"
 LITE="${LITE:-1}"
+FP8="${FP8:-0}"
+FP8_SCOPE="${FP8_SCOPE:-default}"
 COND_IMAGE="${COND_IMAGE:-./assets/photo.jpg}"
 AUDIO_PATH="${AUDIO_PATH:-./assets/news.wav}"
 
@@ -32,6 +34,10 @@ if [[ "$LITE" == "1" || "$LITE" == "true" || "$LITE" == "on" ]]; then
   ARGS+=(--lite)
 else
   ARGS+=(--no_lite)
+fi
+
+if [[ "$FP8" == "1" || "$FP8" == "true" || "$FP8" == "on" ]]; then
+  ARGS+=(--fp8 --fp8_scope "$FP8_SCOPE")
 fi
 
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" \

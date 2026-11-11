@@ -10,7 +10,11 @@ ORDER = ["lite_c0", "lite_c1", "pro_c0", "pro_c1", "lite_c0_256", "lite_c1_256",
 def label(r):
     c = r["config"]
     res = c.get("resolution", "512x512").split("x")[0]
-    return f"{res}² {'Lite (TAE)' if c['lite'] else 'Pro (Wan VAE)'}{' + compile' if c['compile'] == 'on' else ''}"
+    fp8 = ""
+    if c.get("fp8", False):  # old JSONs have no fp8 fields -> label unchanged
+        scope = c.get("fp8_scope", "default")
+        fp8 = " + FP8" + (f" ({scope})" if scope != "default" else "")
+    return f"{res}² {'Lite (TAE)' if c['lite'] else 'Pro (Wan VAE)'}{' + compile' if c['compile'] == 'on' else ''}{fp8}"
 
 
 def ms(x):

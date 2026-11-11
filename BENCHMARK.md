@@ -175,7 +175,7 @@ Compute is ~520 ms per chunk at 512² and ~140 ms at 256². These RTFs are a lit
 conda activate leaptalk            # torch 2.7.1 + requirements.txt
 bash bench/run_all.sh              # 512: all 4 configs; pauses/unpauses the 4090 Triton containers
 CONFIGS="lite_c0_256:1:off:256:2 lite_c1_256:1:on:256:2 pro_c0_256:0:off:256:1 pro_c1_256:0:on:256:1" \
-  bash bench/run_all.sh            # 256: same matrix (format tag:lite:compile:size:repeats)
+  bash bench/run_all.sh            # 256: same matrix (format tag:lite:compile:size:repeats[:fp8[:scope]])
 python bench/make_report.py        # tables from bench/results/*.json
 cp bench/.env.example bench/.env  # web UI settings: scheme, port, domain, cert + key
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \

@@ -68,6 +68,8 @@ class Settings:
     compile: str = _env("LEAPTALK_COMPILE", "off")
     steps: str = _env("LEAPTALK_NUM_INFERENCE_STEPS", "1")
     lite: bool = _env("LEAPTALK_LITE", "1").lower() in {"1", "true", "on", "yes"}
+    fp8: bool = _env("LEAPTALK_FP8", "0").lower() in {"1", "true", "on", "yes"}
+    fp8_scope: str = _env("LEAPTALK_FP8_SCOPE", "default")
     cuda_visible_devices: str = _env("CUDA_VISIBLE_DEVICES", _env("LEAPTALK_CUDA_VISIBLE_DEVICES", "0"))
     doubao_api_key: str = _env("DOUBAO_API_KEY")
     doubao_access_token: str = _env("DOUBAO_ACCESS_TOKEN") or _env("DOUBAO_ACCESS_KEY") or _env("DOUBAO_TOKEN")
@@ -99,6 +101,8 @@ leaptalk_engine = LeapTalkEngine(
         web_dir=WEB_DIR,
         audio_dir=AUDIO_DIR,
         video_dir=VIDEO_DIR,
+        fp8=settings.fp8,
+        fp8_scope=settings.fp8_scope,
     )
 )
 

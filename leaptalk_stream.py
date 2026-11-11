@@ -49,6 +49,10 @@ class LeapTalkStreamSettings:
     tae_model_type: str = "wan21"
     color_correction_strength: float = 1.0
     use_face_crop: bool = False
+    fp8: bool = False
+    fp8_scope: str = "default"
+    # Hold both a bf16 and an FP8 DiT in one engine (fp8 ignored); switch with LeapTalkEngine.set_precision.
+    fp8_dual: bool = False
 
 
 @dataclass
@@ -71,6 +75,9 @@ class LeapTalkEngine:
         self._sp = None
         self._amp_dtype = None
         self._helpers: dict[str, Any] = {}
+        self.fp8_summary: dict[str, Any] | None = None
+        self.models: dict[str, Any] = {}  # "bf16" / "fp8" -> model to assign to self._pipeline.model
+        self.precision: str = "bf16"
 
     @property
     def slice_len(self) -> int:
@@ -173,6 +180,17 @@ class LeapTalkEngine:
         self._pipeline.model.eval().requires_grad_(False)
         self._pipeline.audio_encoder.eval().requires_grad_(False)
 
+        self.fp8_summary = None
+        dual = bool(s.fp8_dual)
+        single_fp8 = bool(s.fp8) and not dual
+        compile_active = bool(compile_before_lora or compile_after_lora)
+        if (single_fp8 or dual) and not compile_active:
+            print("[leaptalk] warning: FP8 without torch.compile gives little speedup; set compile=on.", flush=True)
+        if single_fp8:
+            from fp8_utils import apply_fp8_to_dit
+
+            self.fp8_summary = apply_fp8_to_dit(self._pipeline.model, scope=s.fp8_scope, device=s.device)
+
         if compile_after_lora:
             self._pipeline.model = torch.compile(self._pipeline.model)
 
@@ -188,6 +206,32 @@ class LeapTalkEngine:
         audio_proj_state = torch.load(audio_proj_path, map_location="cpu")
         inner = _get_inner_flashhead_model(self._pipeline.model)
         inner.audio_proj.load_state_dict(audio_proj_state, strict=True)
+
+        if dual:
+            # audio_proj lives inside the DiT, so copy only after it is loaded. wav2vec, TAE/VAE and the
+            # rest of the pipeline are shared; only the DiT is duplicated.
+            import copy
+
+            from fp8_utils import apply_fp8_to_dit
+
+            base = self._pipeline.model
+            base = getattr(base, "_orig_mod", base)  # unwrap torch.compile (compile_before_lora)
+            fp8_model = copy.deepcopy(base)
+            fp8_model.eval().requires_grad_(False)
+            self.fp8_summary = apply_fp8_to_dit(fp8_model, scope=s.fp8_scope, device=s.device)
+            if compile_active:
+                fp8_model = torch.compile(fp8_model)  # lazy, so compiling after quantization is fine
+                import torch._dynamo
+
+                limit = max(int(torch._dynamo.config.cache_size_limit), 32)
+                torch._dynamo.config.cache_size_limit = limit
+                print(f"[leaptalk] fp8_dual: torch._dynamo cache_size_limit={limit}", flush=True)
+            self.models = {"bf16": self._pipeline.model, "fp8": fp8_model}
+            self.precision = "bf16"
+            print(f"[leaptalk] fp8_dual: loaded bf16 + fp8 (scope={s.fp8_scope}) DiTs, active=bf16", flush=True)
+        else:
+            self.precision = "fp8" if single_fp8 else "bf16"
+            self.models = {self.precision: self._pipeline.model}
 
         self._sp = StreamParams(
             frame_num=s.frame_num,
@@ -232,6 +276,12 @@ class LeapTalkEngine:
             "motion_tail": _motion_prefix_from_latent_tail,
         }
         self._loaded = True
+
+    def set_precision(self, name: str) -> None:
+        if name not in self.models:
+            raise ValueError(f"unknown precision {name!r}; available: {sorted(self.models)}")
+        self._pipeline.model = self.models[name]
+        self.precision = name
 
     async def prepare_turn(self, image_path: Path) -> _TurnState:
         await self.ensure_loaded()

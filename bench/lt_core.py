@@ -31,7 +31,8 @@ MODELS = ROOT / "models"
 DEFAULT_IMAGE = ROOT / "assets" / "photo.jpg"
 
 
-def make_settings(lite: bool, compile_mode: str, steps: int = 1, cuda: str = "0") -> LeapTalkStreamSettings:
+def make_settings(lite: bool, compile_mode: str, steps: int = 1, cuda: str = "0",
+                  fp8: bool = False, fp8_scope: str = "default", fp8_dual: bool = False) -> LeapTalkStreamSettings:
     runtime = ROOT / "bench" / "runtime"
     return LeapTalkStreamSettings(
         ckpt_dir=str(MODELS / "SoulX-FlashHead-1_3B"),
@@ -41,6 +42,9 @@ def make_settings(lite: bool, compile_mode: str, steps: int = 1, cuda: str = "0"
         compile=compile_mode,
         steps=int(steps),
         lite=bool(lite),
+        fp8=bool(fp8),
+        fp8_scope=fp8_scope,
+        fp8_dual=bool(fp8_dual),
         cuda_visible_devices=cuda,
         output_sample_rate=16000,
         root_dir=ROOT,
@@ -83,12 +87,14 @@ def crop_to_face(src: str | Path, ratio: float, out_path: str | Path, size: int 
 
 
 class LeapTalkRunner:
-    def __init__(self, lite: bool = True, compile_mode: str = "off", steps: int = 1, cuda: str = "0") -> None:
-        self.settings = make_settings(lite, compile_mode, steps, cuda)
+    def __init__(self, lite: bool = True, compile_mode: str = "off", steps: int = 1, cuda: str = "0",
+                 fp8: bool = False, fp8_scope: str = "default", fp8_dual: bool = False) -> None:
+        self.settings = make_settings(lite, compile_mode, steps, cuda, fp8, fp8_scope, fp8_dual)
         self.engine = LeapTalkEngine(self.settings)
         t0 = time.perf_counter()
         self.engine._load_sync()
         self.load_seconds = time.perf_counter() - t0
+        self.fp8_summary = getattr(self.engine, "fp8_summary", None)  # None when FP8 is off
         self.torch = self.engine._helpers["torch"]
         self.h = self.engine._helpers
         self.pipe = self.engine._pipeline
@@ -96,6 +102,20 @@ class LeapTalkRunner:
         self.dtype = self.engine._amp_dtype
         self.sr = self.settings.sample_rate
         self.slice_frames = int(self.sp.slice_len)  # new frames per chunk (28, any fps)
+
+    # Precision switching: self.pipe is engine._pipeline, and every per-chunk call reads self.pipe.model at
+    # call time, so swapping engine._pipeline.model is enough.
+    @property
+    def precisions(self) -> list[str]:
+        keys = list(self.engine.models)
+        return sorted(keys, key=lambda k: (k != "bf16", k))
+
+    @property
+    def precision(self) -> str:
+        return self.engine.precision
+
+    def set_precision(self, name: str) -> None:
+        self.engine.set_precision(name)
 
     # fps can change per turn (prepare); a chunk always has 28 frames, so its audio length follows fps
     @property

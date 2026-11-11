@@ -496,6 +496,18 @@ def main():
         choices=["auto", "on", "off"],
         help="torch.compile base model: auto uses LoRA key inspection.",
     )
+    parser.add_argument(
+        "--fp8",
+        action="store_true",
+        help="FP8 (E4M3) quantize DiT block Linears via torchao (needs SM>=8.9, e.g. RTX 4090/H100). Use with --compile on.",
+    )
+    parser.add_argument(
+        "--fp8_scope",
+        type=str,
+        default="default",
+        choices=["default", "all", "ffn"],
+        help="Which DiT block Linears to quantize (see fp8_utils.py).",
+    )
 
     parser.add_argument(
         "--usp",
@@ -716,6 +728,13 @@ def main():
     # Merge LoRA weights into base model to remove PEFT overhead during inference
     pipeline.model = pipeline.model.merge_and_unload()
     pipeline.model.eval().requires_grad_(False)
+
+    if args.fp8:
+        if not (compile_before_lora or compile_after_lora):
+            logger.warning("FP8 without torch.compile gives little speedup; consider --compile on.")
+        from fp8_utils import apply_fp8_to_dit
+
+        apply_fp8_to_dit(pipeline.model, scope=args.fp8_scope, device=args.device)
 
     if compile_after_lora:
         logger.info("Compiling model after loading LoRA (--compile on; LoRA keys do not require compiled base).")

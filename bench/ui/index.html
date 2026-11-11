@@ -38,6 +38,8 @@ img.prev{width:96px;height:96px;object-fit:cover;border-radius:8px;border:1px so
 .btn.live,.go.live{background:var(--bad);border-color:var(--bad);color:#fff}
 .meter{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:8px}.meter span{display:block;height:100%;width:0;background:var(--ok);transition:width .08s}
 p.note{color:var(--mut);margin:10px 0 0;font-size:12.5px}
+.go.alt{margin-left:8px;background:transparent;color:var(--acc);border:1px solid var(--acc)}
+.ab{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:10px}.ab video{max-width:none}@media (max-width:700px){.ab{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -92,8 +94,9 @@ p.note{color:var(--mut);margin:10px 0 0;font-size:12.5px}
       <div class="seg" id="res"><button data-s="256">256×256</button><button class="on" data-s="512">512×512</button></div>
       <label>Frame rate (the model was trained at 25 fps; other rates are untested for lip sync)</label>
       <div class="seg" id="fpsSel"><button data-f="15">15</button><button data-f="20">20</button><button class="on" data-f="25">25</button><button data-f="30">30</button></div>
+      <div class="hidden" id="precWrap"><label>Precision (DiT weights)</label><div class="seg" id="prec"></div></div>
       <div class="chk" id="rtWrap"><input type="checkbox" id="rt"><span>Feed audio at real-time speed (simulates live TTS)</span></div>
-      <button class="go" id="go">Generate</button>
+      <button class="go" id="go">Generate</button><button class="go alt hidden" id="abBtn" title="Two non-stream runs with the same inputs, bf16 then FP8">A/B compare (bf16 vs FP8)</button>
       <div class="status" id="status"></div>
     </div>
     <div class="card">
@@ -102,6 +105,10 @@ p.note{color:var(--mut);margin:10px 0 0;font-size:12.5px}
       <div class="kpis" id="liveK" style="margin-top:12px"></div>
     </div>
   </div>
+  <div class="card hidden" id="abCard"><h2>A/B compare: bf16 vs FP8</h2>
+    <div class="arow"><button class="btn" id="abPlay">▶ Play both</button><button class="btn" id="abSwap">Audio: bf16</button><b id="abSpeed"></b></div>
+    <div class="ab"><div><label>bf16</label><video id="abA" controls playsinline></video><div class="mut" id="abAm"></div></div>
+      <div><label>FP8</label><video id="abB" controls playsinline muted></video><div class="mut" id="abBm"></div></div></div></div>
   <div class="card"><h2>Chunk log</h2><div class="tw log"><table id="chunkLog"></table></div></div>
 </section>
 </main>
@@ -109,12 +116,16 @@ p.note{color:var(--mut);margin:10px 0 0;font-size:12.5px}
 const $=s=>document.querySelector(s), f3=x=>x==null||isNaN(x)?'–':(+x).toFixed(3), ms=x=>x==null||isNaN(x)?'–':Math.round(x*1000)+' ms', f1=x=>(+x).toFixed(1);
 let RES=[], INFO={};
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));$('#tab-bench').classList.toggle('hidden',b.dataset.tab!=='bench');$('#tab-gen').classList.toggle('hidden',b.dataset.tab!=='gen')});
-const label=r=>`${(r.config.resolution||'512x512').split('x')[0]}² ${r.config.vae}${r.config.compile==='on'?' + compile':''}`;
+const label=r=>`${(r.config.resolution||'512x512').split('x')[0]}² ${r.config.vae}${r.config.compile==='on'?' + compile':''}${r.config.fp8?' + FP8'+(r.config.fp8_scope&&r.config.fp8_scope!=='default'?' ('+r.config.fp8_scope+')':''):''}`;
+const PL=p=>p==='fp8'?'FP8':p||'bf16';
+const precList=s=>s.precisions&&s.precisions.length?s.precisions:[s.fp8?'fp8':'bf16'];  // old servers only send the fp8 flag
+function precText(s){const P=precList(s),d=s.default_precision||P[0],sc=P.includes('fp8')&&s.fp8_scope&&s.fp8_scope!=='default'?' ('+s.fp8_scope+')':'';
+  return P.length>1?' · '+P.map(p=>PL(p)+(p==='fp8'?sc:'')+(p===d?' (default)':'')).join(' + '):P[0]==='fp8'?' · FP8'+sc:''}
 const kpi=(l,v,s='')=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s}</div></div>`;
 
 async function loadBench(){
   [RES,INFO]=await Promise.all([fetch('/api/results').then(r=>r.json()),fetch('/api/info').then(r=>r.json())]);
-  const s=INFO.server; $('#srv').textContent=`Live server: ${s.gpu} · ${(s.sizes||[512]).map(x=>x+'²').join('/')} · ${s.lite?'TAE (Lite)':'Wan VAE'} · compile ${s.compile} · ${s.steps} NFE`;
+  const s=INFO.server; $('#srv').textContent=`Live server: ${s.gpu} · ${(s.sizes||[512]).map(x=>x+'²').join('/')} · ${s.lite?'TAE (Lite)':'Wan VAE'} · compile ${s.compile}${precText(s)} · ${s.steps} NFE`;
   if(!RES.length){$('#cfgTable').innerHTML='<tr><td>No results yet</td></tr>';return}
   const best=RES.reduce((a,b)=>a.summary.stream.rtf<b.summary.stream.rtf?a:b);
   const S=best.summary;
@@ -150,14 +161,16 @@ async function xfetch(url,opts={}){
   catch(e){if(opts.signal&&opts.signal.aborted)throw e;report(`${url}: ${e.message}, retrying`);await new Promise(r=>setTimeout(r,300));return await fetch(url,opts)}}
 
 // ---------------- generate
-let MODE='stream', SIZE=512, FPS=25, imageId='default', rec=null, echo=null;
+let MODE='stream', SIZE=512, FPS=25, PREC='bf16', AB_OK=false, imageId='default', rec=null, echo=null;
+const busy=b=>{$('#go').disabled=$('#abBtn').disabled=b};
+const abVis=()=>$('#abBtn').classList.toggle('hidden',!AB_OK||MODE==='echo');
 const goLabel=()=>MODE==='echo'?(echo?'■ Stop echo':'● Start echo'):'Generate';
 const seg=(sel,key,set)=>document.querySelectorAll(sel+' button').forEach(b=>b.onclick=()=>{set(b.dataset[key]);document.querySelectorAll(sel+' button').forEach(x=>x.classList.toggle('on',x===b))});
 seg('#res','s',v=>SIZE=+v);seg('#fpsSel','f',v=>FPS=+v);
 $('#iPrev').src='/media/default_image';
 document.querySelectorAll('#mode button').forEach(b=>b.onclick=()=>{if(echo||rec)return;MODE=b.dataset.m;document.querySelectorAll('#mode button').forEach(x=>x.classList.toggle('on',x===b));
   $('#rtWrap').classList.toggle('hidden',MODE==='nonstream');$('#audioIn').classList.toggle('hidden',MODE==='echo');$('#echoIn').classList.toggle('hidden',MODE!=='echo');
-  $('#go').textContent=goLabel();$('#status').textContent=MODE==='echo'&&!micOK()?MIC_MSG:''});
+  $('#go').textContent=goLabel();abVis();$('#status').textContent=MODE==='echo'&&!micOK()?MIC_MSG:''});
 async function upload(file){const fd=new FormData();fd.append('file',file);const r=await xfetch('/api/upload',{method:'POST',body:fd});if(!r.ok)throw new Error(await r.text());return (await r.json()).id}
 function addAudio(id,name,blob){const o=document.createElement('option');o.value=id;o.textContent=name;$('#aSel').prepend(o);$('#aSel').value=id;$('#aPrev').src=URL.createObjectURL(blob)}
 $('#aUp').onchange=async e=>{const f=e.target.files[0];if(!f)return;$('#recInfo').textContent='Uploading…';
@@ -180,6 +193,9 @@ const faceNote=f=>f&&!f.found?' No face found, so the full image was used.':'';
 async function initGen(){const info=INFO.audios?INFO:await fetch('/api/info').then(r=>r.json());
   $('#aSel').innerHTML=info.audios.map((a,i)=>`<option value="${a.id}">${i+1}. ${a.name} (${f1(a.duration_s)} s)</option>`).join('');
   const setPrev=()=>{const v=$('#aSel').value;if(v.startsWith('bench:'))$('#aPrev').src='/media/bench_audio/'+v.split(':')[1]};$('#aSel').onchange=setPrev;setPrev();
+  const s=info.server||{},P=precList(s);PREC=P.includes(s.default_precision)?s.default_precision:P[0];
+  $('#prec').innerHTML=P.map(p=>`<button data-p="${p}" class="${p===PREC?'on':''}">${PL(p)}</button>`).join('');seg('#prec','p',v=>PREC=v);
+  $('#precWrap').classList.toggle('hidden',P.length<2);AB_OK=P.includes('bf16')&&P.includes('fp8');abVis();
   if(!micOK()){$('#recBtn').disabled=true;$('#recInfo').textContent='Record needs HTTPS'}}
 const live=o=>$('#liveK').innerHTML=Object.entries(o).map(([k,v])=>kpi(k,v)).join('');
 const med=a=>a.length?[...a].sort((x,y)=>x-y)[a.length>>1]:NaN;
@@ -260,7 +276,7 @@ function playStream(audio,realtime,h={}){  // stream a clip through /api/stream 
     else if(m.type==='error')fail(m.message)};
   (async()=>{
     let r;try{r=await xfetch('/api/stream',{method:'POST',headers:{'Content-Type':'application/json'},signal:ctl.signal,
-      body:JSON.stringify({audio,image:imageId,realtime,size:SIZE,fps:FPS,face_crop:FACE()})})}
+      body:JSON.stringify({audio,image:imageId,realtime,size:SIZE,fps:FPS,face_crop:FACE(),precision:PREC})})}
     catch(e){if(!ctl.signal.aborted)fail(`could not reach the server (${e.message}). ${NET_HINT}`);return}
     if(!r.ok){fail(`server error ${r.status}: ${await r.text()}`);return}
     // one long HTTPS response; each message = 1 byte kind + 4 byte length + payload
@@ -275,27 +291,47 @@ function playStream(audio,realtime,h={}){  // stream a clip through /api/stream 
 }
 
 async function runNonStream(){
-  $('#go').disabled=true;$('#status').textContent='Generating full video…';$('#chunkLog').innerHTML='';live({});const t0=performance.now();
-  try{const r=await xfetch('/api/nonstream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({audio:$('#aSel').value,image:imageId,size:SIZE,fps:FPS,face_crop:FACE()})});
-    if(!r.ok)throw new Error(await r.text());const d=await r.json();const wait=(performance.now()-t0)/1000;
+  busy(true);$('#status').textContent=`Generating full video (${PL(PREC)})…`;$('#chunkLog').innerHTML='';live({});const t0=performance.now();
+  try{const r=await xfetch('/api/nonstream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({audio:$('#aSel').value,image:imageId,size:SIZE,fps:FPS,face_crop:FACE(),precision:PREC})});
+    if(!r.ok)throw new Error(await r.text());const d=await r.json(),pr=PL(d.precision||PREC);const wait=(performance.now()-t0)/1000;
     $('#out').src=d.url;$('#out').play().catch(()=>{});
-    live({'Time to first frame (client)':f3(wait)+' s','Generate':f3(d.generate_s)+' s','RTF':f3(d.rtf),'Gen FPS':f1(d.fps),'MP4 encode':f3(d.encode_s)+' s','Audio':f1(d.audio_s)+' s'});
-    $('#status').textContent=`Done: ${d.chunks} chunks, ${d.frames} frames at ${d.size}×${d.size}, ${d.video_fps} fps.`+faceNote(d.face)}
-  catch(e){report('non-stream failed: '+e.message);$('#status').textContent=`Error: ${e.message}.`+(e instanceof TypeError?' '+NET_HINT:'')}finally{$('#go').disabled=false}}
+    live({'Precision':pr,'Time to first frame (client)':f3(wait)+' s','Generate':f3(d.generate_s)+' s','RTF':f3(d.rtf),'Gen FPS':f1(d.fps),'MP4 encode':f3(d.encode_s)+' s','Audio':f1(d.audio_s)+' s'});
+    $('#status').textContent=`Done: ${d.chunks} chunks, ${d.frames} frames at ${d.size}×${d.size}, ${d.video_fps} fps, ${pr}.`+faceNote(d.face)}
+  catch(e){report('non-stream failed: '+e.message);$('#status').textContent=`Error: ${e.message}.`+(e instanceof TypeError?' '+NET_HINT:'')}finally{busy(false)}}
 
 function runStream(){
-  $('#go').disabled=true;$('#chunkLog').innerHTML=CHUNK_HEAD;live({});
+  busy(true);$('#chunkLog').innerHTML=CHUNK_HEAD;live({});
   let startInfo=null,meta0=null,firstPlay=null,n=0,lat=[];
-  const upd=e=>{if(!startInfo)return;live({'TTFA frames':meta0?f3(meta0.frames_ready_at_s)+' s':'…','TTFA A/V (server)':meta0?f3(meta0.ready_at_s)+' s':'…','First frame on screen':firstPlay!=null?f3(firstPlay)+' s':'…','Chunks':`${n}/${startInfo.chunks}`,'Latency p50':lat.length?ms(med(lat)):'–','RTF':e?f3(e.rtf):'…','Gen FPS':e?f1(e.fps):'…'})};
+  const upd=e=>{if(!startInfo)return;live({'Precision':PL(startInfo.precision||PREC),'TTFA frames':meta0?f3(meta0.frames_ready_at_s)+' s':'…','TTFA A/V (server)':meta0?f3(meta0.ready_at_s)+' s':'…','First frame on screen':firstPlay!=null?f3(firstPlay)+' s':'…','Chunks':`${n}/${startInfo.chunks}`,'Latency p50':lat.length?ms(med(lat)):'–','RTF':e?f3(e.rtf):'…','Gen FPS':e?f1(e.fps):'…'})};
   try{playStream($('#aSel').value,$('#rt').checked,{
-      onStart:m=>{startInfo=m;$('#status').textContent=`Streaming ${m.chunks} chunks at ${m.size}×${m.size}, ${m.fps} fps (${m.realtime?'real-time audio feed':'as fast as possible'})…`+faceNote(m.face);upd()},
+      onStart:m=>{startInfo=m;$('#status').textContent=`Streaming ${m.chunks} chunks at ${m.size}×${m.size}, ${m.fps} fps, ${PL(m.precision||PREC)} (${m.realtime?'real-time audio feed':'as fast as possible'})…`+faceNote(m.face);upd()},
       onChunk:m=>{if(!meta0)meta0=m;n++;lat.push(m.latency_s);logChunk(m);upd()},
       onPlaying:t=>{firstPlay=t;upd()},
-      onEnd:m=>{upd(m);$('#status').textContent=`Done. Wall ${f3(m.wall_s)} s.`;$('#go').disabled=false},
-      onError:msg=>{$('#status').textContent='Error: '+msg;$('#go').disabled=false}});
+      onEnd:m=>{upd(m);$('#status').textContent=`Done (${PL(startInfo&&startInfo.precision||PREC)}). Wall ${f3(m.wall_s)} s.`;busy(false)},
+      onError:msg=>{$('#status').textContent='Error: '+msg;busy(false)}});
     $('#status').textContent='Preparing reference image…'}
-  catch(e){$('#status').textContent=e.message;$('#go').disabled=false}
+  catch(e){$('#status').textContent=e.message;busy(false)}
 }
+
+// ---------------- A/B: same inputs, bf16 then FP8 (non-stream), side by side
+const AB=[['bf16','#abA','#abAm'],['fp8','#abB','#abBm']];let abAudio=0;  // abAudio = index of the video that carries the sound
+const abMute=()=>{AB.forEach(([,v],i)=>$(v).muted=i!==abAudio);$('#abSwap').textContent='Audio: '+PL(AB[abAudio][0])};
+async function runAB(){
+  busy(true);$('#chunkLog').innerHTML='';live({});$('#abCard').classList.remove('hidden');$('#abSpeed').textContent='';
+  AB.forEach(([,v,m])=>{$(v).pause();$(v).removeAttribute('src');$(v).load();$(m).textContent='…'});abMute();
+  const body={audio:$('#aSel').value,image:imageId,size:SIZE,fps:FPS,face_crop:FACE()},res=[];
+  try{for(const [p,v,m] of AB){$('#status').textContent=`A/B: generating ${PL(p)} (${res.length+1}/2)…`;
+      const r=await xfetch('/api/nonstream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,precision:p})});
+      if(!r.ok)throw new Error(`${PL(p)}: `+await r.text());const d=await r.json();res.push(d);$(v).src=d.url;
+      $(m).textContent=`RTF ${f3(d.rtf)} · Gen FPS ${f1(d.fps)} · generate ${f3(d.generate_s)} s`+(d.precision&&d.precision!==p?` (server ran ${PL(d.precision)})`:'')}
+    const [a,b]=res;$('#abSpeed').textContent=`FP8 speedup: ${(a.generate_s/b.generate_s).toFixed(2)}× (generate time)`;
+    live({'bf16 RTF':f3(a.rtf),'FP8 RTF':f3(b.rtf),'bf16 Gen FPS':f1(a.fps),'FP8 Gen FPS':f1(b.fps),'FP8 speedup':(a.generate_s/b.generate_s).toFixed(2)+'×'});
+    $('#status').textContent=`A/B done: ${b.frames} frames at ${b.size}×${b.size}, ${b.video_fps} fps each. Press Play both.`+faceNote(b.face)}
+  catch(e){report('A/B failed: '+e.message);$('#status').textContent=`Error: ${e.message}.`+(e instanceof TypeError?' '+NET_HINT:'')}finally{busy(false)}}
+$('#abBtn').onclick=runAB;
+$('#abSwap').onclick=()=>{abAudio^=1;abMute()};
+$('#abPlay').onclick=()=>{const vs=AB.map(([,v])=>$(v));abMute();vs.forEach(v=>{v.pause();v.currentTime=0});
+  Promise.all(vs.map(v=>v.play())).catch(e=>$('#status').textContent='Playback failed: '+e.message)};
 
 // ---------------- echo: listen -> a pause ends the sentence -> the avatar repeats it (mic ignored meanwhile)
 const PRE_S=0.3, MIN_SPEECH_S=0.12, TAIL_S=0.3, MAX_UTT_S=30;
@@ -306,7 +342,7 @@ async function toggleEcho(){
   const E={busy:true,stopped:false,ws:null,mic:null,replies:0,lat:[],last:{}};echo=E;
   $('#go').textContent=goLabel();$('#go').classList.add('live');$('#chunkLog').innerHTML=CHUNK_HEAD;live({});
   const say=t=>{if(echo===E)$('#status').textContent=t};
-  const upd=()=>{if(echo===E)live({'Replies':E.replies,'Last sentence':E.last.secs!=null?f1(E.last.secs)+' s':'–','Pause used':E.last.pause!=null?f1(E.last.pause)+' s':'–',
+  const upd=()=>{if(echo===E)live({'Precision':PL(E.prec||PREC),'Replies':E.replies,'Last sentence':E.last.secs!=null?f1(E.last.secs)+' s':'–','Pause used':E.last.pause!=null?f1(E.last.pause)+' s':'–',
     'Pause end → avatar starts':E.last.start!=null?f3(E.last.start)+' s':'–','Speech end → avatar starts':E.last.start!=null?f3(E.last.start+E.last.pause)+' s':'–',
     'Chunk latency p50':E.lat.length?ms(med(E.lat)):'–','RTF (last)':E.last.rtf!=null?f3(E.last.rtf):'–'})};
   let V={},noise=0.003;
@@ -323,6 +359,7 @@ async function toggleEcho(){
     E.last={secs:up.secs,pause};E.replies++;upd();
     let done=false;const next=()=>{if(done||E.stopped)return;done=true;clearTimeout(E.fallback);listen();upd()};
     try{E.ws=playStream(up.id,$('#rt').checked,{
+      onStart:m=>{E.prec=m.precision;upd()},
       onPlaying:()=>{E.last.start=(performance.now()-tEnd)/1000;say('Avatar is speaking…');upd()},
       onChunk:m=>{E.lat.push(m.latency_s);logChunk(m);upd()},
       onEnd:m=>{E.last.rtf=m.rtf;upd();E.fallback=setTimeout(next,(up.secs+5)*1000)},  // in case 'ended' never fires

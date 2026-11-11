@@ -7,7 +7,7 @@ Modes measured per audio clip (after warmup):
   * realtime  : streaming path with audio arriving at 1x wall-clock speed (like a live TTS feed),
                 each chunk also encoded to fMP4 like the web demo -> TTFA and playback stalls
 
-Usage: python bench/bench.py --tag lite_c0 --lite 1 --compile off
+Usage: python bench/bench.py --tag lite_c0 --lite 1 --compile off [--fp8 1 --fp8_scope default]
 """
 from __future__ import annotations
 
@@ -160,6 +160,8 @@ def main():
     ap.add_argument("--lite", type=int, default=1)
     ap.add_argument("--compile", default="off", choices=["off", "on", "auto"])
     ap.add_argument("--steps", type=int, default=1)
+    ap.add_argument("--fp8", type=int, default=0, help="1 = FP8 DiT linears (see fp8_utils.py)")
+    ap.add_argument("--fp8_scope", default="default", choices=["default", "all", "ffn"])
     ap.add_argument("--size", type=int, default=512, help="square output resolution, e.g. 256 or 512")
     ap.add_argument("--image", default=str(lt_core.DEFAULT_IMAGE))
     ap.add_argument("--audios", default=str(ROOT / "bench/audios.txt"))
@@ -179,7 +181,8 @@ def main():
     idle = [mon.snapshot() for _ in range(20) if time.sleep(0.1) is None]
     idle_util = st.mean(u for u, _ in idle)
 
-    r = LeapTalkRunner(lite=bool(args.lite), compile_mode=args.compile, steps=args.steps)
+    r = LeapTalkRunner(lite=bool(args.lite), compile_mode=args.compile, steps=args.steps,
+                       fp8=bool(args.fp8), fp8_scope=args.fp8_scope)
     torch = r.torch
     r.settings.height = r.settings.width = args.size  # used by every prepare() below
     print(f"[{args.tag}] loaded in {r.load_seconds:.1f}s on {torch.cuda.get_device_name(0)}", flush=True)
@@ -312,6 +315,7 @@ def main():
         "tag": args.tag,
         "config": {"lite": bool(args.lite), "vae": "TAE (Lite)" if args.lite else "Wan2.1 VAE",
                    "compile": args.compile, "steps": args.steps, "dtype": "bf16",
+                   "fp8": bool(args.fp8), "fp8_scope": args.fp8_scope, "fp8_summary": r.fp8_summary,
                    "resolution": f"{args.size}x{args.size}", "fps": r.fps, "chunk_frames": r.slice_frames,
                    "chunk_seconds": r.slice_seconds, "repeats": args.repeats},
         "env": {"gpu": torch.cuda.get_device_name(0), "torch": torch.__version__,

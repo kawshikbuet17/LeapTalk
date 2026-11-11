@@ -2,10 +2,16 @@
 
 python bench/ui_server.py --lite 1 --compile on            # scheme/port/domain/cert from bench/.env
 python bench/ui_server.py --scheme http --port 8075        # override the env
+python bench/ui_server.py --lite 1 --compile on --precisions bf16,fp8   # both DiTs loaded; pick per request
+
+--precisions: comma list from {bf16, fp8} (default bf16, or LEAPTALK_UI_PRECISIONS). bf16,fp8 keeps both
+DiTs resident and each request picks one with "precision" (default: the first). --fp8 1 is the old
+spelling of --precisions fp8.
 
 bench/.env (gitignored, see bench/.env.example):
   LEAPTALK_UI_SCHEME=https|http   LEAPTALK_UI_PORT=8075   LEAPTALK_UI_DOMAIN=<your domain>
   LEAPTALK_UI_SSL_CERT=<full-chain cert>   LEAPTALK_UI_SSL_KEY=<private key>
+  LEAPTALK_UI_PRECISIONS=bf16|fp8|bf16,fp8
 """
 from __future__ import annotations
 
@@ -49,6 +55,7 @@ runner: LeapTalkRunner | None = None
 server_cfg: dict = {}
 SIZES = (256, 512)  # square output resolutions offered in the UI
 FPS_CHOICES = (15, 20, 25, 30)  # generation frame rates; the model was trained at 25
+PRECISIONS = ("bf16", "fp8")  # DiT precisions the server can be started with
 
 
 def load_env(path: Path) -> None:
@@ -75,6 +82,25 @@ def resolve_fps(fps) -> int:
     if fps not in FPS_CHOICES:
         raise HTTPException(400, f"fps must be one of {FPS_CHOICES}")
     return fps
+
+
+def resolve_precision(p) -> str:
+    """None/"" -> the server's default (first) precision; anything not loaded -> 400."""
+    avail = runner.precisions
+    if not p:
+        return avail[0]
+    if p not in avail:
+        raise HTTPException(400, f"precision must be one of {avail}")
+    return p
+
+
+def parse_precisions(value: str) -> list[str]:
+    """'bf16,fp8' -> ['bf16', 'fp8'] (bf16 first, no duplicates); exits on an unknown name."""
+    names = [v.strip().lower() for v in value.split(",") if v.strip()]
+    bad = [v for v in names if v not in PRECISIONS]
+    if bad or not names:
+        sys.exit(f"--precisions: bad value {value!r}; use a comma list from {', '.join(PRECISIONS)}")
+    return [p for p in PRECISIONS if p in names]
 
 
 def audio_list():
@@ -201,22 +227,25 @@ class NonStreamReq(BaseModel):
     size: int = 512
     fps: int = 25
     face_crop: float | None = None  # face ratio; None = use the image as is
+    precision: str | None = None  # "bf16" / "fp8"; None = the server's default (server.default_precision)
 
 
 @app.post("/api/nonstream")
 async def nonstream(req: NonStreamReq):
     audio_path, image_path = resolve_audio(req.audio), resolve_image(req.image)
     size, fps, ratio = resolve_size(req.size), resolve_fps(req.fps), resolve_face_ratio(req.face_crop)
+    precision = resolve_precision(req.precision)
 
     def job():
         r = runner
         t0 = time.perf_counter()
+        r.set_precision(precision)  # on the GPU thread under gpu_lock, so jobs can't interleave precisions
         image, face = face_cropped(image_path, ratio)
         audio = r.load_audio(str(audio_path))
         state, prep = r.prepare(image, size, fps)
         frames, d = r.generate_full(state, audio)
         t_enc = time.perf_counter()
-        name = f"ns_{uuid.uuid4().hex[:10]}.mp4"
+        name = f"ns_{precision}_{uuid.uuid4().hex[:10]}.mp4"  # unique per request (A/B runs keep both)
         r.save_mp4(frames, audio, RUNTIME / name)
         enc = time.perf_counter() - t_enc
         dur = len(audio) / r.sr
@@ -234,6 +263,7 @@ async def nonstream(req: NonStreamReq):
             "size": size,
             "video_fps": fps,
             "face": face,
+            "precision": precision,
         }
 
     async with gpu_lock:
@@ -325,6 +355,7 @@ class StreamReq(BaseModel):
     size: int = 512
     fps: int = 25
     face_crop: float | None = None  # face ratio; None = use the image as is
+    precision: str | None = None  # "bf16" / "fp8"; None = the server's default (server.default_precision)
 
 
 async def run_stream(req: StreamReq, out: Frames, who: str) -> None:
@@ -333,16 +364,18 @@ async def run_stream(req: StreamReq, out: Frames, who: str) -> None:
     try:
         audio_path, image_path = resolve_audio(req.audio), resolve_image(req.image)
         size, fps, ratio = resolve_size(req.size), resolve_fps(req.fps), resolve_face_ratio(req.face_crop)
+        precision = resolve_precision(req.precision)
         r = runner
         async with gpu_lock:
             t_req = time.perf_counter()
             image, face = await asyncio.get_running_loop().run_in_executor(None, face_cropped, image_path, ratio)
             audio = r.load_audio(str(audio_path))
+            await on_gpu(r.set_precision, precision)  # held for the whole stream by gpu_lock
             state, prep = await on_gpu(r.prepare, image, size, fps)
             slices = r.split_slices(audio)
             out.json({"type": "start", "chunks": len(slices), "prepare_s": prep, "chunk_seconds": r.slice_seconds,
                       "fps": r.fps, "audio_s": len(audio) / r.sr, "realtime": req.realtime, "size": size,
-                      "face": face})
+                      "face": face, "precision": precision})
             d = r.slice_seconds
             sender = ChunkSender(out, r, t_req)
             for k, sl in enumerate(slices):
@@ -355,8 +388,8 @@ async def run_stream(req: StreamReq, out: Frames, who: str) -> None:
             dur = len(audio) / r.sr
             out.json({"type": "end", "compute_total_s": sender.compute_s, "rtf": sender.compute_s / dur,
                       "fps": len(slices) * r.slice_frames / sender.compute_s,
-                      "wall_s": time.perf_counter() - sender.t0})
-            log(f"stream done for {who}: {sender.n} chunks, {dur:.1f} s audio")
+                      "wall_s": time.perf_counter() - sender.t0, "precision": precision})
+            log(f"stream done for {who}: {sender.n} chunks, {dur:.1f} s audio, {precision}")
     except asyncio.CancelledError:  # the client went away (closed the page, pressed Stop)
         log(f"stream closed by {who} after {sender.n if sender else 0} chunks")
         raise
@@ -402,30 +435,50 @@ def main():
                     help="default: https if LEAPTALK_UI_SSL_CERT/KEY are set, else http")
     ap.add_argument("--lite", type=int, default=1)
     ap.add_argument("--compile", default="off")
+    ap.add_argument("--precisions", default=None,
+                    help="comma list from {bf16, fp8}: DiT precisions to load (bf16,fp8 = both, chosen per "
+                         "request). Default: LEAPTALK_UI_PRECISIONS, else bf16")
+    ap.add_argument("--fp8", type=int, default=0, help="old alias: 1 = --precisions fp8 (if --precisions is not given)")
+    ap.add_argument("--fp8_scope", default="default", choices=["default", "all", "ffn"])
     args = ap.parse_args()
+    if args.precisions is not None:
+        precisions = parse_precisions(args.precisions)
+    elif args.fp8:
+        precisions = ["fp8"]
+    else:
+        precisions = parse_precisions(env("LEAPTALK_UI_PRECISIONS") or "bf16")
     cert, key = env("LEAPTALK_UI_SSL_CERT", ""), env("LEAPTALK_UI_SSL_KEY", "")
     scheme = args.scheme or ("https" if cert and key else "http")
     if scheme == "https" and not (cert and key and Path(cert).is_file() and Path(key).is_file()):
         sys.exit("https needs readable LEAPTALK_UI_SSL_CERT and LEAPTALK_UI_SSL_KEY (bench/.env); or use --scheme http")
 
-    runner = LeapTalkRunner(lite=bool(args.lite), compile_mode=args.compile)
+    dual = precisions == ["bf16", "fp8"]
+    runner = LeapTalkRunner(lite=bool(args.lite), compile_mode=args.compile,
+                            fp8=precisions == ["fp8"], fp8_scope=args.fp8_scope, fp8_dual=dual)
     # warmup both paths so the first user request is not paying compile/cudnn autotune cost
     t = time.perf_counter()
     warm = runner.load_audio(str(ROOT / "assets/news.wav"))[: runner.slice_samples * 4]
-    for size in SIZES:  # each resolution has its own compiled graph
-        for _ in range(2):
-            st, _ = runner.prepare(UI_IMAGE, size)
-            for sl in runner.split_slices(warm):
-                f, _ = runner.stream_chunk(st, sl)
-            runner.encode_fmp4_chunk(f, sl, RUNTIME / "warm.mp4", True)
-            runner.generate_full(runner.prepare(UI_IMAGE, size)[0], warm)
-        for fps in FPS_CHOICES:  # same graph; this only warms wav2vec at each feature length
-            st, _ = runner.prepare(UI_IMAGE, size, fps)
-            for sl in runner.split_slices(warm)[:2]:
-                runner.stream_chunk(st, sl)
-        runner.prepare(UI_IMAGE, size, 25)
-        print(f"warm {size}x{size} done at {time.perf_counter() - t:.0f}s", flush=True)
+    for prec in runner.precisions:  # each precision has its own DiT, so its own compiled graphs
+        runner.set_precision(prec)
+        print(f"warming {prec} ...", flush=True)
+        for size in SIZES:  # each resolution has its own compiled graph
+            for _ in range(2):
+                st, _ = runner.prepare(UI_IMAGE, size)
+                for sl in runner.split_slices(warm):
+                    f, _ = runner.stream_chunk(st, sl)
+                runner.encode_fmp4_chunk(f, sl, RUNTIME / "warm.mp4", True)
+                runner.generate_full(runner.prepare(UI_IMAGE, size)[0], warm)
+            for fps in FPS_CHOICES:  # same graph; this only warms wav2vec at each feature length
+                st, _ = runner.prepare(UI_IMAGE, size, fps)
+                for sl in runner.split_slices(warm)[:2]:
+                    runner.stream_chunk(st, sl)
+            runner.prepare(UI_IMAGE, size, 25)
+            print(f"warm {prec} {size}x{size} done at {time.perf_counter() - t:.0f}s", flush=True)
+    runner.set_precision(runner.precisions[0])
     server_cfg = {"lite": bool(args.lite), "compile": args.compile, "steps": 1, "sizes": list(SIZES),
+                  "fp8": "fp8" in runner.precisions, "fp8_scope": args.fp8_scope,
+                  "fp8_summary": runner.fp8_summary,
+                  "precisions": list(runner.precisions), "default_precision": runner.precisions[0],
                   "fps_choices": list(FPS_CHOICES), "trained_fps": 25,
                   "gpu": runner.torch.cuda.get_device_name(0),
                   "load_s": runner.load_seconds, "warmup_s": time.perf_counter() - t}
