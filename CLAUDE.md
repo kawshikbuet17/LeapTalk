@@ -31,6 +31,17 @@ PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python bench/ui_server.py --lit
 
 `bench/run_all.sh` is specific to the shared 4090 server: it hardcodes `/root/miniconda3/envs/leaptalk` and `docker pause`s two Triton containers during the run (unpausing on exit), and writes logs to `logs/`. Adjust before using it elsewhere. `bench/ui_server.py` reads `bench/.env` (copy `bench/.env.example`). It needs HTTPS for the mic features, and it warms up every resolution and fps at startup, which takes minutes when compile is on.
 
+### FP8 on the 4090 (web UI, bf16 vs FP8 live)
+
+```bash
+pip install "torchao==0.12.0" && python scripts/check_fp8_env.py      # must print READY
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  python bench/ui_server.py --lite 1 --compile on --precisions bf16,fp8
+```
+
+- **Memory:** both copies together should peak around 10 GB instead of 8.6 GB. That's tight next to the ~13 GB the Triton containers hold. If it runs out of memory, start with `--precisions fp8` alone.
+- **Startup:** a cold start should take about 15–20 minutes, because both precisions are compiled at both sizes.
+
 ## Architecture
 
 **Core inference lives in `inference.py`.** The other entry points import its private helpers instead of duplicating them: `_pick_latest_lora_dir`, `_pick_latest_audio_proj`, `_resolve_lite_tae_path`, `_build_infer_timesteps`, `_lora_checkpoint_needs_compiled_base`, `StreamParams`, and others. `leaptalk_stream.LeapTalkEngine._load_sync` imports them lazily. `bench/lt_core.LeapTalkRunner` wraps `LeapTalkEngine` (it calls `_load_sync()` and reads `_helpers`/`_pipeline`/`_sp` directly) and mirrors `_generate_chunk_sync` with CUDA-event timing added. If you change a helper's signature or the per-chunk logic in `inference.py`/`leaptalk_stream.py`, update `bench/lt_core.py` to match.
